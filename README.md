@@ -1,4 +1,4 @@
-# Language as a Tool or a Practice
+# Conditional Grounded Multi-Task Counting (COGMTC)
 
 ## Description
 This project seeks to disentangle the reason why language is correlated with some cognitive tasks. Specifically, this project seeks to determine if language is used as a tool for counting or it acts as a practice for learning counting concepts.

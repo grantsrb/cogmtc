@@ -25,7 +25,7 @@ or
 """
 import sys
 import os
-from langpractice.utils.utils import load_json, save_json
+from cogmtc.utils.utils import load_json, save_json
 from datetime import datetime
 
 # os.system("tmux new -s tes")

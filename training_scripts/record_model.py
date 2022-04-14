@@ -1,8 +1,8 @@
 import torch
 import numpy as np
-import langpractice as lp
+import cogmtc
 import sys
-from langpractice.models import *
+from cogmtc.models import *
 import matplotlib.pyplot as plt
 import cv2
 import os
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     if not os.path.exists("./vids/"): os.mkdir("vids/")
     if not os.path.exists("./imgs/"): os.mkdir("imgs/")
     model_folder = sys.argv[1]
-    checkpt = lp.utils.save_io.load_checkpoint(
+    checkpt = cogmtc.utils.save_io.load_checkpoint(
         model_folder,
         use_best=False
     )
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     model.load_state_dict(checkpt["state_dict"])
     model.eval()
     model.reset()
-    val_runner = lp.experience.ValidationRunner(hyps)
+    val_runner = cogmtc.experience.ValidationRunner(hyps)
     val_runner.phase = 2
     state = val_runner.create_new_env(n_targs=None)
     model.reset(1)

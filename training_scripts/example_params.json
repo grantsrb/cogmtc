@@ -41,7 +41,7 @@
     "drops_perc_threshold": 0,
     "lang_targs_only": false,
 
-    "env_type": "gordongames-v1",
+    "env_types": ["gordongames-v1", "gordongames-v4", "gordongames-v8"],
     "harsh": true,
     "pixel_density": 3,
     "grid_size": [15,15],
@@ -51,7 +51,6 @@
 
     "zipf_order": 0,
 
-    "n_envs": 3,
     "batch_size": 129,
     "seq_len": 7,
     "exp_len": 1000,
