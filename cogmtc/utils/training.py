@@ -178,7 +178,7 @@ def get_save_folder(hyps):
     save_folder = "{}/{}_{}".format(hyps['main_path'],
                                     hyps['exp_name'],
                                     hyps['exp_num'])
-    save_folder += hyps['search_keys'].replace("/", "")
+    save_folder += prep_search_keys(hyps["search_keys"])
     return save_folder
 
 def get_git_revision_hash():
@@ -221,6 +221,24 @@ def record_session(hyps, model):
             del temp_hyps[k]
     utils.save_json(temp_hyps, os.path.join(sf,h+".json"))
 
+def prep_search_keys(s):
+    """
+    Removes unwanted characters from the search keys string.
+    """
+    return s.replace(
+            " ", ""
+        ).replace(
+            "[", ""
+        ).replace(
+            "]", ""
+        ).replace(
+            "\'", ""
+        ).replace(
+            ",", ""
+        ).replace(
+            "/", ""
+        )
+    
 def fill_hyper_q(hyps, hyp_ranges, keys, hyper_q, idx=0):
     """
     Recursive function to load each of the hyperparameter combinations
@@ -251,9 +269,11 @@ def fill_hyper_q(hyps, hyp_ranges, keys, hyper_q, idx=0):
         for k in keys:
             if isinstance(hyp_ranges[k],dict):
                 for rk in hyp_ranges[k].keys():
-                    hyps['search_keys'] += "_" + str(rk)+str(hyps[rk])
+                    s = prep_search_keys(str(hyps[rk]))
+                    hyps['search_keys'] += "_" + str(rk)+s
             else:
-                hyps['search_keys'] += "_" + str(k)+str(hyps[k])
+                s = prep_search_keys(str(hyps[k]))
+                hyps['search_keys'] += "_" + str(k)+s
         hyper_q.put({**hyps})
 
     # Non-base call. Sets a hyperparameter to a new search value and
