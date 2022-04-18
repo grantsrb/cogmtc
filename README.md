@@ -206,8 +206,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         count_targs is overridden by this argument. drop_perc_threshold
         has no impact on this argument.
 
-    "env_type": str
-        the name of the gym environment to be used for the training
+    "env_types": list of str
+        the name of the gym environments to be used for the training.
+        each environment spawns a new data collection process in the
+        training. If you want to use only one environment with multiple
+        data collection processes, specify the same environment
+        repeatedly. `batch_size` will be forced to be divisible by the
+        length of this list.
     "harsh": bool
         an optional parameter to determine the reward scheme for
         gordongames variants
@@ -229,16 +234,16 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the range of potential target counts for training the action
         model during phases other than 0. both low and high are
         inclusive. only applies to gordongames variants.
+
     "zipf_order": float or None
         if greater than 0, the targets are drawn proportionally to the
         zipfian distribution using `zipfian_order` as the exponent.
 
-    "n_envs": int
-        the number of parallel environments to collect data in the
-        training
     "batch_size": int
         the number of rollouts to collect when collecting data and
-        the batch size for the training
+        the batch size for the training. This parameter will be changed
+        so that it is divisible by the number of environments listed
+        in `env_types`.
     "seq_len": int
         the number of consecutive frames to feed into the model for
         a single batch of data
@@ -246,6 +251,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the "experience" length for a single rollout. This is the
         number of steps to take in the environment for a single row
         in the batch during data collection.
+    "max_ctx_len": null or int
+        if you would like to increase the context length for trainings
+        using the transformer class without increasing the back-
+        propagation context-window, you can set this value higher than
+        `seq_len`. This will make the context window larger without
+        backpropping through the increased number of tokens.
+
     "reset_trn_env": bool
         if true, the training environments are reset at the beginning
         of each collection. This ensures that the model never has to

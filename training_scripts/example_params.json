@@ -1,26 +1,26 @@
 {
-    "exp_name": "my_experiment",
+    "exp_name": "myexperiment",
     "exp_num_offset": 0,
-    "save_root": "./",
-    "resume_folder":"",
-    "lang_checkpt":"",
+    "save_root": "",
+    "resume_folder": "",
+    "lang_checkpt": "",
     "description": "",
     "render": false,
     "del_prev_sd": true,
-    "seed": 1234,
+    "seed": 8128,
     "runner_seed_offset": 1,
 
-    "lang_epochs": 90,
-    "actn_epochs": 200,
+    "lang_epochs": 60,
+    "actn_epochs": 90,
     "trn_whls_epoch": null,
 
     "use_count_words": 1,
-    "skip_first_phase": false,
+    "skip_first_phase": true,
     "first_phase": 0,
-    "second_phase": 1,
+    "second_phase": 2,
     "blind_lang": false,
 
-    "model_type": "SimpleLSTM",
+    "model_type": "DoubleLSTM",
     "lstm_lang_first": true,
 
     "h_size": 256,
@@ -32,28 +32,33 @@
     "lang_p": 0.5,
     "conv_noise": 0,
     "dense_noise": 0,
-    "feat_drop_p": 0.1,
+    "feat_drop_p": 0.05,
     "drop_p": 0.35,
     "randomize_order": false,
 
     "langall": false,
+    "drops_perc_threshold": 0.05,
     "count_targs": true,
-    "drops_perc_threshold": 0,
     "lang_targs_only": false,
 
-    "env_types": ["gordongames-v1", "gordongames-v4", "gordongames-v8"],
+    "env_types": [
+        "gordongames-v4",
+        "gordongames-v8"
+    ],
     "harsh": true,
     "pixel_density": 3,
-    "grid_size": [15,15],
-    "targ_range": [1,10],
+    "grid_size": [ 15, 15 ],
+    "targ_range": [ 1, 10 ],
     "lang_range": null,
     "actn_range": null,
 
     "zipf_order": 0,
 
-    "batch_size": 129,
-    "seq_len": 7,
+    "batch_size": 128,
     "exp_len": 1000,
+    "seq_len": 7,
+    "max_ctx_len": null,
+
     "reset_trn_env": true,
     "roll_data": true,
 
