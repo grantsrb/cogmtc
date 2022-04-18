@@ -8,6 +8,10 @@ from cogmtc.utils.utils import try_key
 import torch.nn.functional as F
 
 try:
+    import gordoncont
+except:
+    print("gordongames not installed!")
+try:
     import gordongames
 except:
     print("gordongames not installed!")
@@ -36,6 +40,10 @@ CONDITIONALS = {
                     "single row as there are flashed targets",
   "gordongames-v8": "press the pile object until the number "+\
                     "of items matches the number of targets",
+}
+CONDITIONALS = {
+    **CONDITIONALS,
+    **{k.replace("games", "cont"): v for k,v in CONDITIONALS.items()}
 }
 
 sent = " ".join(CONDITIONALS.values())
@@ -87,7 +95,7 @@ class SequentialEnvironment:
         self.preprocessor = globals()[preprocessor]
         self.seed = time.time() if seed is None else seed
 
-        if "gordongames" in env_type or "nake" in env_type:
+        if "gordon" in env_type or "nake" in env_type:
             kwargs["env_type"] = env_type
             self.env = gym.make(env_type, **kwargs)
         else:
@@ -99,8 +107,10 @@ class SequentialEnvironment:
         self.action_space = self.env.action_space
         if hasattr(self.action_space, "n"):
             self.actn_size = self.env.action_space.n
+            self.is_continuous = False
         else:
             self.actn_size = self.env.action_space.shape[0]
+            self.is_continuous = True
 
     @property
     def raw_shape(self):

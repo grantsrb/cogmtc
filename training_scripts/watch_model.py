@@ -26,8 +26,10 @@ if __name__ == "__main__":
     model.reset()
     val_runner = cogmtc.experience.ValidationRunner(hyps)
     val_runner.phase = 2
-    eval_eps = 10
-    state = val_runner.create_new_env(n_targs=None)
-    model.reset(1)
-
-    data = val_runner.collect_data(model, state, None)
+    eval_eps = 3
+    for env_type in hyps["env_types"]:
+        print("EnvType:", env_type)
+        val_runner.oracle = val_runner.oracles[env_type]
+        state = val_runner.create_new_env(env_type=env_type,n_targs=None)
+        model.reset(1)
+        data = val_runner.collect_data(model, state, None)

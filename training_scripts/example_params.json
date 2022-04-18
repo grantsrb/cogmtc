@@ -71,7 +71,7 @@
     "factor": 0.9,
     "patience": 10,
     "threshold": 0.001,
-    "loss_fxn": "CrossEntropyLoss",
+    "loss_fxn": "cross_entropy",
     "preprocessor": "null_prep",
     "best_by_key": "val_acc_avg"
 }

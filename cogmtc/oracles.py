@@ -1,4 +1,5 @@
 import gordongames as gg
+import gordoncont.oracles as gco
 import numpy as np
 
 class Oracle:
@@ -28,9 +29,21 @@ class RandOracle(Oracle):
     def __call__(self, *args, **kwargs):
         return self.brain()
 
-class GordonOracle:
+class DiscreteOracle:
     def __init__(self, env_type, *args, **kwargs):
         self.oracle = gg.oracles.GordonOracle(env_type, *args, **kwargs)
+
+    def __call__(self, env, *args, **kwargs):
+        """
+        Args:
+            env: SequentialEnvironment
+                the environment
+        """
+        return self.oracle(env.env)
+
+class ContinuousOracle:
+    def __init__(self, env_type, *args, **kwargs):
+        self.oracle = gco.GordonOracle(env_type, *args, **kwargs)
 
     def __call__(self, env, *args, **kwargs):
         """

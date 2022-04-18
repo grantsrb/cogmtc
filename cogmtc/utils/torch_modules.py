@@ -102,3 +102,10 @@ class PositionalEncoding(nn.Module):
         """
         x = x + self.pe[:,:x.size(1)]
         return self.dropout(x)
+
+class NullOp(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def forward(self, x):
+        return x

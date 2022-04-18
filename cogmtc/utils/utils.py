@@ -374,17 +374,18 @@ def get_loss_and_accs(phase,
             action predictions
         lang_preds: sequence of torch FloatTensors [(B,S,L),(B,S,L),...]
             a list of language predictions
-        actn_targs: torch LongTensor (B*S,)
-            action labels
-        lang_targs: torch LongTensor (B*S,)
+        actn_targs: torch LongTensor (B,S) or FloatTensor (B,S,...)
+            action targets. The type of tensor depends on if the game
+            is in a continuous or discrete action space.
+        lang_targs: torch LongTensor (B,S)
             language labels
-        drops: torch LongTensor (B*S,)
+        drops: torch LongTensor (B,S)
             1s denote steps in which the agent dropped an item, 0s
             denote all other steps
-        n_targs: torch LongTensor (B*S,)
+        n_targs: torch LongTensor (B,S)
             the number of target objects on the grid at this step
             of the episode
-        n_items: torch Tensor (B*S,)
+        n_items: torch Tensor (B,S)
             the count of the items on the board
         loss_fxn: torch Module
             the loss function to calculate the loss. i.e.
@@ -403,18 +404,26 @@ def get_loss_and_accs(phase,
                 the appropriate label accuracies depending on the
                 phase
     """
+    actn_preds = actn_preds.reshape(-1, actn_preds.shape[-1])
+    if loss_fxn == F.mse_loss:
+        actn_targs = actn_targs.reshape(-1, actn_targs.shape[-1])
+    else:
+        actn_targs = actn_targs.reshape(-1)
+    lang_targs = lang_targs.reshape(-1)
+    drops = drops.reshape(-1)
+    n_targs = n_targs.reshape(-1)
+    n_items = n_items.reshape(-1)
     # Phase 0: language labels when agent drops an item
     # Phase 1: action labels at all steps in rollout
     # Phase 2: lang and action labels at all steps in rollout
     loss = 0
     lang_accs = {}
-    lang_losses = {}
+    losses = {}
     if phase == 0 or phase == 2:
-        loss, lang_losses, lang_accs = calc_lang_loss_and_accs(
+        loss, losses, lang_accs = calc_lang_loss_and_accs(
             lang_preds,
             lang_targs,
             drops,
-            loss_fxn=loss_fxn,
             categories=n_items,
             prepender=prepender
         )
@@ -427,18 +436,19 @@ def get_loss_and_accs(phase,
             loss_fxn,
             prepender
         )
+        losses[prepender+"_actn_loss"] = actn_loss.item()
         p = lang_p if phase == 2 else 0
         loss = p*loss + (1-p)*actn_loss
-    return loss, lang_losses, {**actn_accs, **lang_accs}
+    return loss, losses, {**actn_accs, **lang_accs}
 
 def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
     """
     Args:
-        logits: torch FloatTensor (B,S,A)
+        logits: torch FloatTensor (B*S,A)
             action predictions
-        targs: torch LongTensor (B*S,)
+        targs: torch LongTensor (B*S,1 or A)
             action labels
-        n_targs: torch LongTensor (B*S,)
+        n_targs: torch LongTensor (B*S,) or torch FloatTensor (B*S,A)
             the number of target objects on the grid at this step
             of the episode
         loss_fxn: torch Module
@@ -454,22 +464,22 @@ def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
             vals: float
                 accuracies
     """
-    logits = logits.reshape(-1, logits.shape[-1])
     targs = targs.to(DEVICE)
-    loss = loss_fxn(logits, targs)
-    with torch.no_grad():
-        actn_accs = calc_accs( # accs is a dict of floats
-            logits=logits,
-            targs=targs,
-            categories=n_targs,
-            prepender=prepender+"_actn"
-        )
+    loss = loss_fxn(logits.squeeze(), targs.squeeze())
+    actn_accs = {}
+    if loss_fxn == F.cross_entropy:
+        with torch.no_grad():
+            actn_accs = calc_accs( # accs is a dict of floats
+                logits=logits,
+                targs=targs,
+                categories=n_targs,
+                prepender=prepender+"_actn"
+            )
     return loss, actn_accs
 
 def calc_lang_loss_and_accs(preds,
                             labels,
                             drops,
-                            loss_fxn,
                             categories,
                             prepender=""):
     """
@@ -481,9 +491,6 @@ def calc_lang_loss_and_accs(preds,
         drops: torch LongTensor (B*S,)
             1s denote steps in which the agent dropped an item, 0s
             denote all other steps
-        loss_fxn: torch Module
-            the loss function to calculate the loss. i.e.
-            torch.nn.CrossEntropyLoss()
         categories: torch long tensor (B, N) or None
             if None, this value is ignored. Otherwise it specifies
             categories for accuracy calculations.
@@ -511,7 +518,7 @@ def calc_lang_loss_and_accs(preds,
     for lang in preds:
         lang = lang.reshape(-1, lang.shape[-1])
         lang = lang[idxs]
-        loss += loss_fxn(lang, labels)
+        loss += F.cross_entropy(lang, labels)
         with torch.no_grad():
             accs = calc_accs( # accs is a dict of floats
                 logits=lang,

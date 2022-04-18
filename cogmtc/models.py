@@ -3,7 +3,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from cogmtc.utils.torch_modules import Flatten, Reshape, GaussianNoise, PositionalEncoding
+from cogmtc.utils.torch_modules import Flatten, Reshape, GaussianNoise, PositionalEncoding, NullOp
 from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask
 from cogmtc.envs import TORCH_CONDITIONALS, CDTNL_LANG_SIZE
 import matplotlib.pyplot as plt
@@ -51,6 +51,7 @@ class Model(CoreModule):
         n_heads=8,
         n_layers=3,
         seq_len=64,
+        output_fxn="NullOp",
         *args, **kwargs
     ):
         """
@@ -97,6 +98,12 @@ class Model(CoreModule):
                 the number of transformer layers
             seq_len: int
                 an upper bound on the sequence length
+            output_fxn: str
+                the string is converted into the respective torch module.
+                this module operates on the action outputs of each
+                model. it must take a tensor and return a tensor of the
+                same shape. Assume inputs are of dimenion (B, ..., E).
+                make sure the module has not yet been instantiated
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -119,6 +126,7 @@ class Model(CoreModule):
         self.n_heads = n_heads
         self.n_layers = n_layers
         self.seq_len = seq_len
+        self.output_fxn = globals()[output_fxn]()
 
     def initialize_conditional_variables(self):
         """
@@ -237,7 +245,7 @@ class NullModel(Model):
             if x.is_cuda:
                 actn.cuda()
                 lang.cuda()
-            return actn, (lang,)
+            return self.output_fxn(actn), (lang,)
 
     def step(self, x):
         """
@@ -249,7 +257,7 @@ class NullModel(Model):
         if self.is_cuda:
             actn = actn.cuda()
             lang = lang.cuda()
-        return actn, (lang,)
+        return self.output_fxn(actn), (lang,)
 
 class TestModel(Model):
     """
@@ -292,7 +300,7 @@ class TestModel(Model):
             if x.is_cuda:
                 actn = actn.cuda()
                 lang = lang.cuda()
-            return actn*x.sum(), (lang*x.sum(),)
+            return self.output_fxn(actn*x.sum()), (lang*x.sum(),)
 
     def step(self, x):
         """
@@ -305,7 +313,7 @@ class TestModel(Model):
         if x.is_cuda:
             actn = actn.cuda()
             lang = lang.cuda()
-        return actn*x.sum(), (lang*x.sum(),)
+        return self.output_fxn(actn*x.sum()), (lang*x.sum(),)
 
 
 class RandomModel(Model):
@@ -343,7 +351,7 @@ class RandomModel(Model):
             if x.is_cuda:
                 actn.cuda()
                 lang.cuda()
-            return actn, (lang,)
+            return self.output_fxn(actn), (lang,)
 
     def step(self, x):
         """
@@ -367,7 +375,7 @@ class RandomModel(Model):
         if x.is_cuda:
             actn.cuda()
             lang.cuda()
-        return actn, (lang,)
+        return self.output_fxn(actn), (lang,)
 
 class SimpleCNN(Model):
     """
@@ -485,7 +493,7 @@ class SimpleCNN(Model):
         for dense in self.lang_denses:
             lang = dense(fx)
             langs.append(lang)
-        return actn, langs
+        return self.output_fxn(actn), langs
 
     def forward(self, x, *args, **kwargs):
         """
@@ -498,7 +506,7 @@ class SimpleCNN(Model):
         b,s = x.shape[:2]
         actn, langs = self.step(x.reshape(-1, *x.shape[2:]))
         langs = torch.stack(langs, dim=0).reshape(len(langs), b, s, -1)
-        return actn.reshape(b,s,-1), langs
+        return self.output_fxn(actn.reshape(b,s,-1)), langs
 
 class SimpleLSTM(Model):
     """
@@ -642,7 +650,7 @@ class SimpleLSTM(Model):
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(self.h))
-        return self.actn_dense(self.h), langs
+        return self.output_fxn(self.actn_dense(self.h)), langs
 
     def forward(self, x, dones, *args, **kwargs):
         """
@@ -676,7 +684,10 @@ class SimpleLSTM(Model):
             self.h, self.c = self.partial_reset(dones[:,s])
             self.prev_hs.append(self.h.detach().data)
             self.prev_cs.append(self.c.detach().data)
-        return torch.cat(actns, dim=1), torch.cat(langs, dim=2)
+        return (
+            torch.output_fxn(torch.cat(actns, dim=1)),
+            torch.cat(langs, dim=2)
+        )
 
 class Transformer(Model):
     """
@@ -823,7 +834,7 @@ class Transformer(Model):
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(encs))
-        return self.actn_dense(encs), langs
+        return self.output_fxn(self.actn_dense(encs)), langs
 
     def forward(self, x, *args, **kwargs):
         """
@@ -848,7 +859,7 @@ class Transformer(Model):
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(encs).reshape(b,s,-1))
-        return actns, torch.stack(langs,dim=0)
+        return self.output_fxn(actns), torch.stack(langs,dim=0)
 
 class NoConvLSTM(SimpleLSTM):
     """
@@ -984,7 +995,7 @@ class DoubleLSTM(SimpleLSTM):
             actn = self.actn_dense(h0)
         self.hs = [h0, h1]
         self.cs = [c0, c1]
-        return actn, langs
+        return self.output_fxn(actn), langs
 
     def forward(self, x, dones, *args, **kwargs):
         """
@@ -1018,7 +1029,10 @@ class DoubleLSTM(SimpleLSTM):
             self.hs, self.cs = self.partial_reset(dones[:,s])
             self.prev_hs.append([h.detach().data for h in self.hs])
             self.prev_cs.append([c.detach().data for c in self.cs])
-        return torch.cat(actns, dim=1), torch.cat(langs, dim=2)
+        return (
+            self.output_fxn(torch.cat(actns, dim=1)),
+            torch.cat(langs, dim=2)
+        )
 
 class ConditionalLSTM(CoreModule):
     """

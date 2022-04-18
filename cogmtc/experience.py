@@ -16,6 +16,28 @@ if torch.cuda.is_available():
 else:
     DEVICE = torch.device("cpu")
 
+def get_oracle(env_type, *args, **kwargs):
+    """
+    Handles getting the appropriate oracle based on the env_type.
+
+    Args:
+        env_type: str
+            the name of the environment
+    Returns:
+        oracle: Oracle
+            the appropriate oracle for the env_type. oracles take in
+            an env and output an action that can be fed directly into
+            the env.
+    """
+    if "gordongame" in env_type:
+        return DiscreteOracle(env_type, *args, **kwargs)
+    elif "gordoncont" in env_type:
+        return ContinuousOracle(env_type, *args, **kwargs)
+    else:
+      raise NotImplemented(
+        "An oracle for {} has not yet been implemented".format(env_type)
+      )
+
 def next_state(env, obs_deque, obs, reset, n_targs=None):
     """
     Get the next state of the environment.
@@ -73,9 +95,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 share_tensors: bool
                     if true, each tensor within shared_exp is moved to the
                     shared memory for parallel processing
-                env_type: str or None
+                env_types: str or None
                     used to determine if n_targs, n_items, and n_aligned
                     should be included in the shared_exp dict
+                continuous_env: bool
+                    a boolean determining if the envs are continuous
+                actn_size: int
+                    the size of the action space. only necessary if
+                    continuous_env is true.
             share_tensors: bool
                 set to true if using the experience replay accross
                 multiple procs
@@ -88,8 +115,10 @@ class ExperienceReplay(torch.utils.data.Dataset):
                         the observations collected by the environments
                     dones: torch long tensor (N, L)
                         the done signals collected by the environments
-                    actns: torch long tensor (N, L)
-                        the actions taken during the data collection
+                    actns: torch longtensor (N,L) or floattensor (N,L,A)
+                        the actions taken during the data collection.
+                        longtensor if discrete env, floattensor if
+                        continuous
                     n_targs: torch long tensor (N, L) or None
                         the number of goal targets if using gordongames
                         environment
@@ -130,6 +159,12 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     self.exp_len
                 )).long(),
         }
+        if self.hyps["continuous_env"]:
+            self.shared_exp["actns"] = torch.zeros((
+                        self.batch_size,
+                        self.exp_len,
+                        self.hyps["actn_size"]
+                    )).float()
         self.info_keys = [
             "n_targs","n_items","n_aligned","grabs","disp_targs",
             "is_animating",
@@ -284,7 +319,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
         drops = torch.zeros_like(grabs).long()
         for i,env_type in enumerate(hyps["env_types"]):
             temp = {**hyps, "env_type": env_type}
-            drops[i*block:(i+1)*block] = ExperienceReplay.get_drops_helper(
+            drops[i*block:(i+1)*block]=ExperienceReplay.get_drops_helper(
                 temp,
                 grabs[i*block:(i+1)*block],
                 is_animating[i*block:(i+1)*block]
@@ -402,6 +437,7 @@ class DataCollector:
         self.obs_shape = self.validator.env.shape
         self.hyps['inpt_shape'] = self.validator.state_bookmark.shape
         self.hyps["actn_size"] = self.validator.env.actn_size
+        self.hyps["continuous_env"] = self.validator.env.is_continuous
         lang_range = try_key(
             self.hyps,
             "lang_range",
@@ -547,9 +583,6 @@ class Runner:
                                     observations
                     "env_type": type of gym environment to be interacted
                                 with. Follows OpenAI's gym api.
-                    "oracle_type": str
-                        the name of the Oracle Class to give the ideal
-                        action from the environment
             shared_exp: dict
                 keys: str
                 vals: shared torch tensors
@@ -593,7 +626,7 @@ class Runner:
         self.terminate_q = terminate_q
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
         env_type = self.hyps['env_type']
-        self.oracle = globals()[self.hyps["oracle_type"]](env_type)
+        self.oracle = get_oracle(**self.hyps)
         self.rand = np.random.default_rng(self.hyps["seed"])
 
     def create_new_env(self, n_targs=None, env_type=None):
@@ -741,11 +774,11 @@ class Runner:
             else:
                 inpt = t_state[None].to(DEVICE)
                 actn_pred, _ = model.step(inpt, cdtnl)
-                actn = sample_action(
-                    F.softmax(actn_pred, dim=-1)
-                ).item()
+                actn = self.get_actn(actn_pred)
             # Step the environment
             obs, rew, done, info = self.env.step(actn)
+            if self.env.is_continuous:
+                actn_targ = torch.FloatTensor(actn_targ)
             # Collect data
             self.shared_exp['rews'][idx,i] = rew
             self.shared_exp['dones'][idx,i] = float(done)
@@ -772,6 +805,27 @@ class Runner:
                 [c.detach().data for c in model.cs]
             )
 
+    def get_action(self, actn_pred):
+        """
+        Outputs the appropriate action from the actn_pred to be used
+        by the environment.
+
+        Args:
+            actn_pred: torch FloatTensor (1,A)
+        Returns:
+            actn: int or float ndarray (A,)
+                the action to be used by the environment
+        """
+        if self.env.is_continuous:
+            return actn_pred.squeeze().cpu().data.numpy()
+        if try_key(self.hyps, "val_max_actn", False):
+            actn = torch.argmax(actn_pred[0]).item()
+        else:
+            actn = sample_action(
+                F.softmax(actn_pred, dim=-1)
+            ).item()
+        return actn
+
 class ValidationRunner(Runner):
     def __init__(self, hyps,
                        gate_q=None,
@@ -792,9 +846,6 @@ class ValidationRunner(Runner):
                                     observations
                     "env_type": type of gym environment to be interacted
                                 with. Follows OpenAI's gym api.
-                    "oracle_type": str
-                        the name of the Oracle Class to give the ideal
-                        action from the environment
             gate_q: multiprocessing Queue.
                 Allows main process to control when rollouts should be
                 collected.
@@ -825,13 +876,12 @@ class ValidationRunner(Runner):
         self.env_types = self.hyps["env_types"]
         self.hyps["env_type"] = self.env_types[0]
         self.oracles = {}
-        otype = self.hyps["oracle_type"]
         for env_type in self.env_types:
             temp_hyps = {**self.hyps, "env_type": env_type}
-            self.oracles[env_type] = globals()[otype](**temp_hyps)
+            self.oracles[env_type] = get_oracle(**temp_hyps)
         self.rand = np.random.default_rng(self.hyps["seed"])
         self.ep_idx = 0 # Used to track which data goes with which ep
-        self.loss_fxn = F.cross_entropy
+        self.loss_fxn = getattr(F, self.hyps["loss_fxn"])
 
     def run(self, model=None):
         """
@@ -1049,12 +1099,12 @@ class ValidationRunner(Runner):
         )
 
     def save_epoch_data(self,
-                       data,
-                       epoch,
-                       phase,
-                       n_targs,
-                       env_type,
-                       save_name="epoch_stats.csv"):
+                        data,
+                        epoch,
+                        phase,
+                        n_targs,
+                        env_type,
+                        save_name="epoch_stats.csv"):
         """
         Saves the loss and acc stats averaged over all episodes in the
         validation for a given n_target value. Saves the data as a
@@ -1080,7 +1130,7 @@ class ValidationRunner(Runner):
                 n_targs=data["n_targs"],
                 n_items=data["n_items"],
                 prepender="",
-                loss_fxn=F.cross_entropy
+                loss_fxn=self.loss_fxn
             )
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}
@@ -1115,14 +1165,15 @@ class ValidationRunner(Runner):
             data: dict
                 keys: str
                 vals: shared torch tensors
-                    actn_preds: float tensor (N, K)
+                    actn_preds: float tensor (N, A)
                         Collects the predictions of the model for each
                         timestep t
-                    lang_preds: float tensor (N, K)
+                    lang_preds: float tensor (N, L)
                         Collects the predictions of the model for each
                         timestep t
-                    actn_targs: long tensor (N,)
-                        Collects the oracle actions at each timestep t
+                    actn_targs: long tensor (N,) or float tensor (N,A)
+                        Collects the oracle actions at each timestep t.
+                        If working with continuous environment, 
                     rews: float tensor (N,)
                         Collects the reward at each timestep t
                     dones: long tensor (N,)
@@ -1181,12 +1232,7 @@ class ValidationRunner(Runner):
                 lang = torch.stack(lang_pred, dim=0)
             # lang: (N,1,L) where N is number of lang models
             data["lang_preds"].append(lang)
-            if try_key(self.hyps, "val_max_actn", False):
-                actn = torch.argmax(actn_pred[0]).item()
-            else:
-                actn = sample_action(
-                    F.softmax(actn_pred, dim=-1)
-                ).item()
+            actn = self.get_action(actn_pred)
             # get target action
             targ = self.oracle(self.env)
             data["actn_targs"].append(targ)
@@ -1245,7 +1291,12 @@ class ValidationRunner(Runner):
         # S stands for the collected sequence
         data["actn_preds"] = torch.cat(data["actn_preds"], dim=0) #(S,A)
         data["lang_preds"] = torch.cat(data["lang_preds"], dim=1) #(N,S,L)
-        data["actn_targs"] = torch.LongTensor(data["actn_targs"])
+        if self.env.is_continuous:
+            data["actn_targs"] = torch.from_numpy(
+                np.asarray(data["actn_targs"], self.env.action_space.dtype)
+            )
+        else:
+            data["actn_targs"] = torch.LongTensor(data["actn_targs"])
         data["dones"] = torch.LongTensor(data["dones"])
         data["grabs"] = torch.LongTensor(data["grabs"])
         data["rews"] = torch.FloatTensor(data["rews"])

@@ -7,7 +7,7 @@ from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
@@ -258,7 +258,7 @@ class Trainer:
             self.hyps["lr"],
             try_key(self.hyps, "resume_folder", None)
         )
-        self.loss_fxn = globals()[self.hyps["loss_fxn"]]()
+        self.loss_fxn = getattr(F, self.hyps["loss_fxn"])
 
     def init_phase(self):
         """
@@ -455,11 +455,11 @@ class Trainer:
                 loss_fxn=self.loss_fxn,
                 actn_preds=logits,
                 lang_preds=langs,
-                actn_targs=actns.flatten(),
-                lang_targs=labels.flatten(),
-                drops=drops.flatten(),
-                n_targs=n_targs.flatten(),
-                n_items=n_items.flatten(),
+                actn_targs=actns,
+                lang_targs=labels,
+                drops=drops,
+                n_targs=n_targs,
+                n_items=n_items,
                 prepender="train",
                 lang_p=self.hyps["lang_p"]
             )
@@ -477,7 +477,7 @@ class Trainer:
                 i,
                 len(data_iter),
                 loss.item(),
-                accs[key],
+                try_key(accs, key, losses["train_actn_loss"]),
                 iter_start
             )
             if self.hyps["exp_name"] == "test" and i >= 2: break
