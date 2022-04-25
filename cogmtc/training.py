@@ -477,7 +477,7 @@ class Trainer:
                 i,
                 len(data_iter),
                 loss.item(),
-                try_key(accs, key, losses["train_actn_loss"]),
+                try_key(accs, key, try_key(losses,"train_actn_loss",0)),
                 iter_start
             )
             if self.hyps["exp_name"] == "test" and i >= 2: break
