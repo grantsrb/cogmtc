@@ -10,6 +10,7 @@ from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs
 from collections import deque
+import matplotlib.pyplot as plt
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")
@@ -487,7 +488,6 @@ class DataCollector:
         if not hasattr(self, "procs"):
             self.procs = []
         for i in range(len(self.runners)):
-            if i > len(self.runners)//2: model = None
             proc = mp.Process(
                 target=self.runners[i].run,
                 args=(model,)
@@ -744,6 +744,7 @@ class Runner:
                 shared_exp designated for this rollout
         """
         model.eval()
+        debug = try_key(self.hyps,"debug",False) and model.trn_whls<1
         if try_key(self.hyps, "reset_trn_env", False):
             state = next_state(
                 self.env,
@@ -755,10 +756,7 @@ class Runner:
             model.reset(1)
         else:
             state = self.state_bookmark
-            if self.h_bookmark is None:
-                model.reset(1)
-            else:
-                model.hs, model.cs = self.h_bookmark
+            self.handle_h_bookmark(model)
         exp_len = self.hyps['exp_len']
         with torch.no_grad():
             idxs = model.cdtnl_idxs[self.idx][None]
@@ -769,12 +767,13 @@ class Runner:
             self.shared_exp["obs"][idx,i] = t_state
             # Get actn
             actn_targ = self.oracle(self.env, state=t_state) # int
-            if model.trn_whls == 1:
-                actn = actn_targ
-            else:
+            if self.rand.random()>model.trn_whls:
                 inpt = t_state[None].to(DEVICE)
                 actn_pred, _ = model.step(inpt, cdtnl)
-                actn = self.get_actn(actn_pred)
+                actn = self.get_action(actn_pred)
+            else:
+                actn_pred = None
+                actn = actn_targ
             # Step the environment
             obs, rew, done, info = self.env.step(actn)
             if self.env.is_continuous:
@@ -798,12 +797,48 @@ class Runner:
                 n_targs=sample_zipfian(self.hyps)
             )
             if done: model.reset(1)
+            if debug and idx==0:
+                #env.render()
+                print("Actn:", actn)
+                print("Actn Targ:", actn_targ)
+                print("Model:", actn_pred)
+                plt.imshow(obs.squeeze())
+                plt.show()
+
         self.state_bookmark = state
-        if hasattr(model, "h"):
-            self.h_bookmark = (
+        self.handle_model_bookmark(model)
+
+    def handle_model_bookmark(self, model):
+        """
+        This is a helper function to handle bookmarking of the model's
+        recurrent memory vectors. It first records the current model
+        recurrent state, then updates the model with the bookmarked
+        state and finally uses the recorded recurrent state to update
+        the bookmark.
+
+        Args:
+            model: torch.nn.Module
+        """
+        h_bookmark = None
+        if hasattr(model, "hs"):
+            h_bookmark = (
                 [h.detach().data for h in model.hs],
                 [c.detach().data for c in model.cs]
             )
+        elif hasattr(model, "h"):
+            h_bookmark = (
+                model.h.detach().data,
+                model.c.detach().data
+            )
+
+        if self.h_bookmark is None:
+            model.reset(1)
+        elif hasattr(model, "hs"):
+            model.hs, model.cs = self.h_bookmark
+        elif hasattr(model, "h"):
+            model.h,model.c = self.h_bookmark
+
+        self.h_bookmark = h_bookmark
 
     def get_action(self, actn_pred):
         """
@@ -944,6 +979,8 @@ class ValidationRunner(Runner):
             self.hyps["targ_range"][0],
             self.hyps["targ_range"][1]+1
         )
+        if self.hyps["exp_name"] == "test":
+            rainj = range(2,3)
         self.hyps["seed"] = self.seed
         avg_acc = 0
         avg_loss = 0
@@ -1258,21 +1295,26 @@ class ValidationRunner(Runner):
             if self.hyps["render"]:
                 self.env.render()
                 print("Use count words:", self.hyps["use_count_words"],
-                    "-- Lang size:", self.hyps["lang_size"],
+                    "-- Lang size:", model.lang_size,
                     "-- N_Targs:", info["n_targs"],
                     "-- N_Items:", info["n_items"]
                 )
-                targ = get_lang_labels(
+                lang_targ = get_lang_labels(
                     torch.LongTensor([info["n_items"]]),
                     torch.LongTensor([info["n_targs"]]),
-                    max_label=self.hyps["lang_size"]-1,
+                    max_label=model.lang_size-1,
                     use_count_words=self.hyps["use_count_words"]
                 ).item()
                 print(
                     "Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--",
-                    targ
+                    lang_targ
+                )
+                print("Actn (pred, targ)",
+                    actn,
+                    "--",
+                    data["actn_targs"][-1]
                 )
                 if done:
                     print(
