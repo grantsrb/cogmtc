@@ -217,11 +217,7 @@ def training_loop(n_epochs,
         data_collector.dispatch_validator(epoch)
 
         # Clean up the epoch
-        trainer.end_epoch(epoch)
-        trn_whls = try_key(trainer.hyps, "trn_whls_epoch", None)
-        trn_whls_off = trn_whls is not None and epoch >= trn_whls
-        if trainer.phase != 0 and trn_whls_off:
-            model.trn_whls = 0
+        trainer.end_epoch(epoch, n_epochs, model)
     if verbose:
         print("Awaiting validator")
     data_collector.await_validator()
@@ -391,48 +387,48 @@ class Trainer:
 
             ## Testing
             ##############
-            if self.hyps["exp_name"]=="test" and self.hyps["render"]:
-                grabs = data["grabs"]
-                print("train grabs:")
-                for row in range(len(drops)):
-                    print(grabs[row].cpu().numpy())
-                print("train n_targs:")
-                for row in range(len(drops)):
-                    print(n_targs[row].cpu().numpy())
-                print("train n_items:")
-                for row in range(len(drops)):
-                    print(n_items[row].cpu().numpy())
-                print("train drops:")
-                for row in range(len(drops)):
-                    print(drops[row].cpu().numpy())
-                print("lang labels:")
-                for row in range(len(drops)):
-                    print(labels[row].cpu().numpy())
-                print("train actns:")
-                for row in range(len(drops)):
-                    print(actns[row].cpu().numpy())
+            ##if self.hyps["exp_name"]=="test" and self.hyps["render"]:
+            ##    grabs = data["grabs"]
+            ##    print("train grabs:")
+            ##    for row in range(len(drops)):
+            ##        print(grabs[row].cpu().numpy())
+            ##    print("train n_targs:")
+            ##    for row in range(len(drops)):
+            ##        print(n_targs[row].cpu().numpy())
+            ##    print("train n_items:")
+            ##    for row in range(len(drops)):
+            ##        print(n_items[row].cpu().numpy())
+            ##    print("train drops:")
+            ##    for row in range(len(drops)):
+            ##        print(drops[row].cpu().numpy())
+            ##    print("lang labels:")
+            ##    for row in range(len(drops)):
+            ##        print(labels[row].cpu().numpy())
+            ##    print("train actns:")
+            ##    for row in range(len(drops)):
+            ##        print(actns[row].cpu().numpy())
 
-                print("Starting new loop")
-                o = obs.detach().cpu().data.numpy()
-                o = o[:,:, 0].transpose((0,2,1,3)).reshape(-1, 45*o.shape[1])
-                fig = plt.figure(figsize=(10,10))
-                plt.imshow(o)
-                plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
-                ##plt.show()
-                for row in range(min(len(obs),4)):
-                    print("row:",row)
-                    for ii,o in enumerate(obs[row].detach().cpu().numpy()):
-                        print("seq:", ii)
-                        print("n_items:", n_items[row,ii].cpu().numpy())
-                        print("n_targs:", n_targs[row,ii].cpu().numpy())
-                        print("drops:", drops[row,ii].cpu().numpy())
-                        print("labels:", labels[row,ii].cpu().numpy())
-                        print("actns:", actns[row,ii].cpu().numpy())
-                        print()
-                        plt.imshow(o.transpose((1,2,0)).squeeze())
-                        plt.show()
-                ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
-            ##############
+            ##    print("Starting new loop")
+            ##    o = obs.detach().cpu().data.numpy()
+            ##    o = o[:,:, 0].transpose((0,2,1,3)).reshape(-1, 45*o.shape[1])
+            ##    fig = plt.figure(figsize=(10,10))
+            ##    plt.imshow(o)
+            ##    plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
+            ##    ##plt.show()
+            ##    for row in range(min(len(obs),4)):
+            ##        print("row:",row)
+            ##        for ii,o in enumerate(obs[row].detach().cpu().numpy()):
+            ##            print("seq:", ii)
+            ##            print("n_items:", n_items[row,ii].cpu().numpy())
+            ##            print("n_targs:", n_targs[row,ii].cpu().numpy())
+            ##            print("drops:", drops[row,ii].cpu().numpy())
+            ##            print("labels:", labels[row,ii].cpu().numpy())
+            ##            print("actns:", actns[row,ii].cpu().numpy())
+            ##            print()
+            ##            plt.imshow(o.transpose((1,2,0)).squeeze())
+            ##            plt.show()
+            ##    ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
+            ################
 
             # Resets to h value to appropriate step of last loop
             self.reset_model(model, len(obs))
@@ -470,6 +466,7 @@ class Trainer:
             # Record metrics
             metrics = {
                 "train_loss": loss.item(),
+                **losses,
                 **accs}
             self.recorder.track_loop(metrics)
             key = "train_lang_acc" if self.phase==0 else "train_actn_acc"
@@ -593,14 +590,17 @@ class Trainer:
                 )
         return metrics
 
-    def end_epoch(self, epoch):
+    def end_epoch(self, epoch, n_epochs, model):
         """
-        Records, prints, cleans up the epoch statistics. Call this
-        function at the end of the epoch.
+        Records, prints, cleans up the epoch statistics. Also handles
+        the training wheels probabilities. Call this function at the
+        end of an epoch.
 
         Args:
             epoch: int
                 the epoch that has just finished.
+            n_epochs: int
+                the total epoch count
         """
         self.recorder.save_epoch_stats(
             self.phase,
@@ -610,6 +610,32 @@ class Trainer:
             verbose=self.verbose
         )
         self.recorder.reset_stats()
+
+        trn_whls = try_key(self.hyps, "trn_whls_epoch", None)
+        trn_whls_off = trn_whls is not None and epoch >= trn_whls
+        if self.phase != 0 and trn_whls_off:
+            model.trn_whls = self.update_trn_whls_p(epoch, n_epochs)
+
+    def update_trn_whls_p(self,epoch, n_epochs):
+        """
+        Updates the training wheels probability where trn_whls_p is
+        the probability of using the oracle to pick an action and 
+        1-trn_whls_p is the probability of using the agent to select
+        an action.. The trn_whls_p is linearly decreased from its
+        initial value to the trn_whls_min value over the course of
+        the trn_whls_epoch to the final epoch.
+
+        Args:
+            epoch: int
+                the epoch that has just finished.
+            n_epochs: int
+                the total epoch count
+        """
+        p = self.hyps["trn_whls_p"]
+        whls_epoch = self.hyps["trn_whls_epoch"]
+        progress = float(epoch-whls_epoch)/float(n_epochs-whls_epoch)
+        whls_min = self.hyps["trn_whls_min"]
+        return max(p - (p-whls_min)*progress, whls_min)
 
     def end_training(self, data_collector, shared_model):
         """

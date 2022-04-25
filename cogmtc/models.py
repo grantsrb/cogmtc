@@ -3,6 +3,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.nn import Tanh, Sigmoid
 from cogmtc.utils.torch_modules import Flatten, Reshape, GaussianNoise, PositionalEncoding, NullOp
 from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask
 from cogmtc.envs import TORCH_CONDITIONALS, CDTNL_LANG_SIZE
@@ -127,6 +128,7 @@ class Model(CoreModule):
         self.n_layers = n_layers
         self.seq_len = seq_len
         self.output_fxn = globals()[output_fxn]()
+        print("Output function:", output_fxn)
 
     def initialize_conditional_variables(self):
         """

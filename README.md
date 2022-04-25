@@ -99,11 +99,24 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         The number of training epochs for the language training phase
     "actn_epochs": int
         The number of training epochs for the action training phase
+
     "trn_whls_epoch": int
         the epoch in which the training wheels are removed from the
         model. This means that the training data is collected using
         the actions from the model. The action targets continue to be
         those produced by the oracle.
+    "trn_whls_p": float
+        the initial probability of using an action from the oracle to
+        step the environment after the `trn_whls_epoch`. 1 means that
+        all actions used to step the environment are taken from the
+        oracle. This value is automatically linearly interpolated from
+        its initial value to the `trn_whls_min` over the course of
+        `n_epochs`-`trn_whls_epoch`. If `trn_whls_min` is set to the
+        same value as `trn_whls_p` then no decaying takes place.
+    "trn_whls_min": float
+        this is the minimum value of the trn_whls_p. see the description
+        of `trn_whls_p` for a explanation of how this value is used in
+        training.
 
     "use_count_words": int [0, 1, or 2]
         this determines what type of count words should be used. If 0,

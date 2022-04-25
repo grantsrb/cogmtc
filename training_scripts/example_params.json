@@ -12,7 +12,10 @@
 
     "lang_epochs": 60,
     "actn_epochs": 90,
+
     "trn_whls_epoch": null,
+    "trn_whls_p": 1,
+    "trn_whls_min": 0,
 
     "use_count_words": 1,
     "skip_first_phase": true,
