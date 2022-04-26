@@ -164,6 +164,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
 
     "h_size": int
         the size of the hidden dimension for dense networks
+    "n_outlayers": int
+        the number of layers in the action and language output networks
+        only applies when using Vary model variants
     "bnorm": bool
         determines if the model should use batchnorm. true means it
         does use batchnorm
@@ -174,6 +177,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "actv_fxn": str
+        the activation function for the output layers. defaults to "ReLU"
     "n_frame_stack": int
         the number of frames to stack for an observation of the game
     "lr": float

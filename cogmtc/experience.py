@@ -756,7 +756,7 @@ class Runner:
             model.reset(1)
         else:
             state = self.state_bookmark
-            self.handle_h_bookmark(model)
+            self.handle_model_bookmark(model)
         exp_len = self.hyps['exp_len']
         with torch.no_grad():
             idxs = model.cdtnl_idxs[self.idx][None]

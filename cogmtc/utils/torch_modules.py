@@ -103,6 +103,35 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1)]
         return self.dropout(x)
 
+class ScaleShift(nn.Module):
+    """
+    Scales and shifts the activations by a learnable amount.
+    """
+    def __init__(self, shape, scale=True, shift=True):
+        """
+        shape: tuple (depth, height, width) or (length,)
+            shape of the incoming activations discluding the
+            batch dimension
+        scale: bool
+            include multiplicative parameter
+        shift: bool
+            include summing parameter
+        """
+        super(ScaleShift, self).__init__()
+        self.shape = shape
+        self.scale = scale
+        self.shift = shift
+        self.scale_param = nn.Parameter(torch.ones(shape).float(),
+                                              requires_grad=scale)
+        self.shift_param= nn.Parameter(torch.zeros(shape).float(),
+                                              requires_grad=shift)
+    def forward(self, x):
+        return x*self.scale_param + self.shift_param
+
+    def extra_repr(self):
+        s = 'shape={}, scale={}, shift={}'
+        return s.format(self.shape, self.scale, self.shift)
+
 class NullOp(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()

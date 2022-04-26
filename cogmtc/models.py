@@ -3,12 +3,11 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn import Tanh, Sigmoid
-from cogmtc.utils.torch_modules import Flatten, Reshape, GaussianNoise, PositionalEncoding, NullOp
+from torch.nn import *
+from cogmtc.utils.torch_modules import *
 from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask
 from cogmtc.envs import TORCH_CONDITIONALS, CDTNL_LANG_SIZE
 import matplotlib.pyplot as plt
-# update_shape(shape, kernel=3, padding=0, stride=1, op="conv"):
 
 class CoreModule(torch.nn.Module):
     def __init__(self, *args, **kwargs):
@@ -51,8 +50,10 @@ class Model(CoreModule):
         env_types=["gordongames-v4"],
         n_heads=8,
         n_layers=3,
+        n_outlayers=2,
         seq_len=64,
         output_fxn="NullOp",
+        actv_fxn="ReLU",
         *args, **kwargs
     ):
         """
@@ -96,7 +97,11 @@ class Model(CoreModule):
             n_heads: int
                 the number of attention heads if using a transformer
             n_layers: int
-                the number of transformer layers
+                the number of transformer layers.
+            n_outlayers: int
+                the number of layers for the actn and language dense
+                network output modules if using the Vary variants of
+                the LSTM models
             seq_len: int
                 an upper bound on the sequence length
             output_fxn: str
@@ -105,6 +110,9 @@ class Model(CoreModule):
                 model. it must take a tensor and return a tensor of the
                 same shape. Assume inputs are of dimenion (B, ..., E).
                 make sure the module has not yet been instantiated
+            actv_fxn: str
+                the name of the activation function for each layer
+                of the action and language outputs.
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -128,7 +136,8 @@ class Model(CoreModule):
         self.n_layers = n_layers
         self.seq_len = seq_len
         self.output_fxn = globals()[output_fxn]()
-        print("Output function:", output_fxn)
+        self.actv_fxn = actv_fxn
+        self.n_outlayers = n_outlayers
 
     def initialize_conditional_variables(self):
         """
@@ -543,7 +552,6 @@ class SimpleLSTM(Model):
                 nn.Linear(self.h_size, self.actn_size),
             )
 
-
         # Lang Dense
         self.lang_denses = nn.ModuleList([])
         for i in range(self.n_lang_denses):
@@ -563,7 +571,6 @@ class SimpleLSTM(Model):
                     nn.Linear(2*self.h_size, self.lang_size),
                 ))
 
-        print("lang_denses:", self.n_lang_denses)
         # Memory
         if self.lnorm:
             self.layernorm_c = nn.LayerNorm(self.h_size)
@@ -690,178 +697,6 @@ class SimpleLSTM(Model):
             torch.output_fxn(torch.cat(actns, dim=1)),
             torch.cat(langs, dim=2)
         )
-
-class Transformer(Model):
-    """
-    A recurrent LSTM model.
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert self.bnorm == False,\
-            "bnorm must be False. it does not work with Recurrence!"
-
-        # Convs
-        cnn = SimpleCNN(*args, **kwargs)
-        self.shapes = cnn.shapes
-        self.features = cnn.features
-
-        # Linear Projection
-        self.flat_size = cnn.flat_size
-        self.proj = nn.Linear(self.flat_size, self.h_size)
-
-        # Transformer
-        self.pos_enc = PositionalEncoding(
-            self.h_size,
-            self.feat_drop_p
-        )
-        enc_layer = nn.TransformerEncoderLayer(
-            self.h_size,
-            self.n_heads,
-            3*self.h_size,
-            self.feat_drop_p,
-            norm_first=True,
-            batch_first=True
-        )
-        self.encoder = nn.TransformerEncoder(
-            enc_layer,
-            self.n_layers
-        )
-
-        # Action Dense
-        if self.drop_p > 0:
-            self.actn_dense = nn.Sequential(
-                nn.Dropout(self.drop_p),
-                GaussianNoise(self.dense_noise),
-                nn.ReLU(),
-                nn.Linear(self.h_size, self.actn_size),
-            )
-        else:
-            self.actn_dense = nn.Sequential(
-                GaussianNoise(self.dense_noise),
-                nn.ReLU(),
-                nn.Linear(self.h_size, self.actn_size),
-            )
-
-        # Lang Dense
-        self.lang_denses = nn.ModuleList([])
-        for i in range(self.n_lang_denses):
-            if self.drop_p > 0:
-                self.lang_denses.append(nn.Sequential(
-                    nn.ReLU(),
-                    nn.Linear(self.h_size, self.h_size),
-                    nn.Dropout(self.drop_p),
-                    nn.ReLU(),
-                    nn.Linear(self.h_size, self.lang_size),
-                ))
-            else:
-                self.lang_denses.append(nn.Sequential(
-                    nn.ReLU(),
-                    nn.Linear(self.h_size, self.h_size),
-                    nn.ReLU(),
-                    nn.Linear(self.h_size, self.lang_size),
-                ))
-
-        print("lang_denses:", self.n_lang_denses)
-        # Memory
-        if self.lnorm:
-            self.layernorm = nn.LayerNorm(self.h_size)
-        self.h = None
-        self.c = None
-        self.reset(batch_size=1)
-        max_seq_len = 128
-        self.register_buffer(
-            "fwd_mask",
-            get_transformer_fwd_mask(s=max_seq_len)
-        )
-
-    def reset(self, batch_size=1):
-        """
-        Resets the memory vectors
-
-        Args:
-            batch_size: int
-                the size of the incoming batches
-        Returns:
-            None
-        """
-        self.prev_hs = collections.deque(maxlen=self.seq_len)
-
-    def partial_reset(self, dones):
-        """
-        Uses the done signals to reset appropriate parts of the h and
-        c vectors.
-
-        Args:
-            dones: torch LongTensor (B,)
-                h and c are zeroed along any row in which dones[row]==1
-        Returns:
-            h: torch FloatTensor (B, H)
-            c: torch FloatTensor (B, H)
-        """
-        pass
-
-    def reset_to_step(self, step=0):
-        """
-        This function resets all recurrent states in a model to the
-        previous recurrent state just after the argued step. So, the
-        model takes the 0th step then the 0th h and c vectors are the
-        h and c vectors just after the model took this step.
-
-        Args:
-            step: int
-                the index of the step to revert the recurrence to
-        """
-        pass
-
-    def step(self, x, *args, **kwargs):
-        """
-        Performs a single step rather than a complete sequence of steps
-
-        Args:
-            x: torch FloatTensor (B, C, H, W)
-        Returns:
-            actn: torch Float Tensor (B, K)
-            langs: list of torch Float Tensor (B, L)
-        """
-        fx = self.features(x)
-        fx = fx.reshape(len(x), -1) # (B, N)
-        fx = self.proj(fx)
-        self.prev_hs.append(fx)
-        encs = torch.stack(list(self.prev_hs), dim=1)
-        encs = self.pos_enc(encs)
-        slen = encs.shape[1]
-        encs = self.encoder( encs, self.fwd_mask[:slen,:slen] )
-        if self.lnorm:
-            encs = self.layernorm(encs[:,-1])
-        langs = []
-        for dense in self.lang_denses:
-            langs.append(dense(encs))
-        return self.output_fxn(self.actn_dense(encs)), langs
-
-    def forward(self, x, *args, **kwargs):
-        """
-        Args:
-            x: torch FloatTensor (B, S, C, H, W)
-        Returns:
-            actns: torch FloatTensor (B, S, N)
-                N is equivalent to self.actn_size
-            langs: torch FloatTensor (N,B,S,L)
-        """
-        seq_len = x.shape[1]
-        self.prev_hs = collections.deque(maxlen=self.seq_len)
-        b,s,c,h,w = x.shape
-        fx = self.features(x.reshape(-1,c,h,w)).reshape(b*s,-1)
-        fx = self.proj(fx).reshape(b,s,-1)
-        encs = self.pos_enc(fx)
-        encs = self.encoder( encs, self.fwd_mask[:s,:s] )
-        if self.lnorm:
-            encs = self.layernorm(encs)
-        encs = encs.reshape(b*s,-1)
-        actns = self.actn_dense(encs).reshape(b,s,-1)
-        langs = []
-        for dense in self.lang_denses:
-            langs.append(dense(encs).reshape(b,s,-1))
-        return self.output_fxn(actns), torch.stack(langs,dim=0)
 
 class NoConvLSTM(SimpleLSTM):
     """
@@ -1035,6 +870,225 @@ class DoubleLSTM(SimpleLSTM):
             self.output_fxn(torch.cat(actns, dim=1)),
             torch.cat(langs, dim=2)
         )
+
+class VaryLSTM(SimpleLSTM):
+    """
+    A variant of the SimpleLSTM model that allows for finer control
+    over the number of layers used for outputing a language and and
+    action label.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Action Dense
+        n_layers = self.n_outlayers
+        outsize=2*self.h_size if n_layers > 1 else self.actn_size
+        block = [ nn.Linear(self.h_size, outsize) ]
+        prev_size = outsize
+        for i in range(1, n_layers):
+            block.append( nn.Dropout(self.drop_p) )
+            block.append( GaussianNoise(self.dense_noise) )
+            block.append( globals()[self.actv_fxn]() )
+            block.append( ScaleShift((outsize,)) )
+            if i+1 == n_layers: outsize = self.actn_size
+            block.append( nn.Linear(prev_size, outsize) )
+        self.actn_dense = nn.Sequential(*block)
+
+        # Lang Dense
+        self.lang_denses = nn.ModuleList([])
+        for i in range(self.n_lang_denses):
+            outsize=2*self.h_size if n_layers>1 else self.lang_size
+            block = [ nn.Linear(self.h_size, outsize) ]
+            prev_size = outsize
+            for i in range(1, n_layers):
+                block.append( nn.Dropout(self.drop_p) )
+                block.append( GaussianNoise(self.dense_noise) )
+                block.append( globals()[self.actv_fxn]() )
+                block.append( ScaleShift((outsize,)) )
+                if i+1 == n_layers: outsize = self.lang_size
+                block.append( nn.Linear(prev_size, outsize) )
+            self.lang_denses.append(nn.Sequential(*block))
+
+class DoubleVaryLSTM(DoubleLSTM):
+    """
+    A model with two LSTMs. One for each the language and action outputs.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        temp = VaryLSTM(*args, **kwargs)
+        self.actn_dense = temp.actn_dense
+        self.lang_denses = temp.lang_denses
+
+class Transformer(Model):
+    """
+    A recurrent LSTM model.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert self.bnorm == False,\
+            "bnorm must be False. it does not work with Recurrence!"
+
+        # Convs
+        cnn = SimpleCNN(*args, **kwargs)
+        self.shapes = cnn.shapes
+        self.features = cnn.features
+
+        # Linear Projection
+        self.flat_size = cnn.flat_size
+        self.proj = nn.Linear(self.flat_size, self.h_size)
+
+        # Transformer
+        self.pos_enc = PositionalEncoding(
+            self.h_size,
+            self.feat_drop_p
+        )
+        enc_layer = nn.TransformerEncoderLayer(
+            self.h_size,
+            self.n_heads,
+            3*self.h_size,
+            self.feat_drop_p,
+            norm_first=True,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(
+            enc_layer,
+            self.n_layers
+        )
+
+        # Action Dense
+        if self.drop_p > 0:
+            self.actn_dense = nn.Sequential(
+                nn.Dropout(self.drop_p),
+                GaussianNoise(self.dense_noise),
+                nn.ReLU(),
+                nn.Linear(self.h_size, self.actn_size),
+            )
+        else:
+            self.actn_dense = nn.Sequential(
+                GaussianNoise(self.dense_noise),
+                nn.ReLU(),
+                nn.Linear(self.h_size, self.actn_size),
+            )
+
+        # Lang Dense
+        self.lang_denses = nn.ModuleList([])
+        for i in range(self.n_lang_denses):
+            if self.drop_p > 0:
+                self.lang_denses.append(nn.Sequential(
+                    nn.ReLU(),
+                    nn.Linear(self.h_size, self.h_size),
+                    nn.Dropout(self.drop_p),
+                    nn.ReLU(),
+                    nn.Linear(self.h_size, self.lang_size),
+                ))
+            else:
+                self.lang_denses.append(nn.Sequential(
+                    nn.ReLU(),
+                    nn.Linear(self.h_size, self.h_size),
+                    nn.ReLU(),
+                    nn.Linear(self.h_size, self.lang_size),
+                ))
+
+        print("lang_denses:", self.n_lang_denses)
+        # Memory
+        if self.lnorm:
+            self.layernorm = nn.LayerNorm(self.h_size)
+        self.h = None
+        self.c = None
+        self.reset(batch_size=1)
+        max_seq_len = 128
+        self.register_buffer(
+            "fwd_mask",
+            get_transformer_fwd_mask(s=max_seq_len)
+        )
+
+    def reset(self, batch_size=1):
+        """
+        Resets the memory vectors
+
+        Args:
+            batch_size: int
+                the size of the incoming batches
+        Returns:
+            None
+        """
+        self.prev_hs = collections.deque(maxlen=self.seq_len)
+
+    def partial_reset(self, dones):
+        """
+        Uses the done signals to reset appropriate parts of the h and
+        c vectors.
+
+        Args:
+            dones: torch LongTensor (B,)
+                h and c are zeroed along any row in which dones[row]==1
+        Returns:
+            h: torch FloatTensor (B, H)
+            c: torch FloatTensor (B, H)
+        """
+        pass
+
+    def reset_to_step(self, step=0):
+        """
+        This function resets all recurrent states in a model to the
+        previous recurrent state just after the argued step. So, the
+        model takes the 0th step then the 0th h and c vectors are the
+        h and c vectors just after the model took this step.
+
+        Args:
+            step: int
+                the index of the step to revert the recurrence to
+        """
+        pass
+
+    def step(self, x, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor (B, L)
+        """
+        fx = self.features(x)
+        fx = fx.reshape(len(x), -1) # (B, N)
+        fx = self.proj(fx)
+        self.prev_hs.append(fx)
+        encs = torch.stack(list(self.prev_hs), dim=1)
+        encs = self.pos_enc(encs)
+        slen = encs.shape[1]
+        encs = self.encoder( encs, self.fwd_mask[:slen,:slen] )
+        if self.lnorm:
+            encs = self.layernorm(encs[:,-1])
+        langs = []
+        for dense in self.lang_denses:
+            langs.append(dense(encs))
+        return self.output_fxn(self.actn_dense(encs)), langs
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+            langs: torch FloatTensor (N,B,S,L)
+        """
+        seq_len = x.shape[1]
+        self.prev_hs = collections.deque(maxlen=self.seq_len)
+        b,s,c,h,w = x.shape
+        fx = self.features(x.reshape(-1,c,h,w)).reshape(b*s,-1)
+        fx = self.proj(fx).reshape(b,s,-1)
+        encs = self.pos_enc(fx)
+        encs = self.encoder( encs, self.fwd_mask[:s,:s] )
+        if self.lnorm:
+            encs = self.layernorm(encs)
+        encs = encs.reshape(b*s,-1)
+        actns = self.actn_dense(encs).reshape(b,s,-1)
+        langs = []
+        for dense in self.lang_denses:
+            langs.append(dense(encs).reshape(b,s,-1))
+        return self.output_fxn(actns), torch.stack(langs,dim=0)
 
 class ConditionalLSTM(CoreModule):
     """
