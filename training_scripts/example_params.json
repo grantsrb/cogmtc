@@ -27,6 +27,7 @@
     "lstm_lang_first": true,
 
     "h_size": 256,
+    "h_mult": 3,
     "n_outlayers": 2,
     "bnorm": false,
     "lnorm": true,
@@ -39,6 +40,12 @@
     "dense_noise": 0,
     "feat_drop_p": 0.05,
     "drop_p": 0.35,
+
+    "depths": [32, 40],
+    "kernels": [3, 3],
+    "strides": [1,1],
+    "paddings": [0,0],
+
     "randomize_order": false,
 
     "langall": false,
