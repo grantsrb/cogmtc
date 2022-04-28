@@ -200,10 +200,16 @@ class Model(CoreModule):
         self.output_fxn = globals()[output_fxn]()
         self.actv_fxn = actv_fxn
         self.n_outlayers = n_outlayers
-        self.depths = [self.inpt_shape[-3], *depths],
+        self.depths = [self.inpt_shape[-3], *depths]
         self.kernels = kernels
+        if isinstance(kernels, int):
+            self.kernels=[kernels for i in range(len(depths))]
         self.strides = strides
+        if isinstance(strides, int):
+            self.strides=[strides for i in range(len(depths))]
         self.paddings = paddings
+        if isinstance(paddings, int):
+            self.paddings=[paddings for i in range(len(depths))]
 
     def initialize_conditional_variables(self):
         """
