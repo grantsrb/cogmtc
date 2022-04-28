@@ -163,7 +163,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         actions. Defaults to True
 
     "h_size": int
-        the size of the hidden dimension for dense networks
+        this number is used as the size of the RNN hidden vector and
+        the transformer dim
+    "h_mult": int
+        this number is a multiplier for the `h_size` to expand the
+        dimensionality of the dense output hidden layers.
+    "n_outlayers": int
+        the number of layers in the action and language output networks
+        only applies when using Vary model variants
     "bnorm": bool
         determines if the model should use batchnorm. true means it
         does use batchnorm
@@ -174,6 +181,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "actv_fxn": str
+        the activation function for the output layers. defaults to "ReLU"
     "n_frame_stack": int
         the number of frames to stack for an observation of the game
     "lr": float
@@ -195,6 +204,19 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "drop_p": float
         the probability of zeroing a neuron within the dense
         layers of the network.
+
+    "depths": tuple of ints
+        the depths of the cnn layers. the number of cnn layers is
+        dependent on the number of items in this tuple
+    "kernels": tuple of ints
+        the kernel sizes of the cnn layers. the number of items in this
+        tuple should match that of the number of items in `depths`
+    "strides": tuple of ints
+        the strides of the cnn layers. the number of items in this
+        tuple should match that of the number of items in `depths`
+    "paddings": tuple of ints
+        the paddings of the cnn layers. the number of items in this
+        tuple should match that of the number of items in `depths`
 
     "langall": bool
         if false, language predictions only occur when the agent drops
