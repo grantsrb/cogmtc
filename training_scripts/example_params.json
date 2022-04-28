@@ -42,9 +42,9 @@
     "drop_p": 0.35,
 
     "depths": [32, 40],
-    "kernels": [3, 3],
-    "strides": [1,1],
-    "paddings": [0,0],
+    "kernels": 3,
+    "strides": 1,
+    "paddings": 0,
 
     "randomize_order": false,
 
