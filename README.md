@@ -181,6 +181,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "skip_lstm": bool
+        if true, the features are inluded using a skip connection
+        to the second lstm. Only applies in DoubleVaryLSTM variants
     "actv_fxn": str
         the activation function for the output layers. defaults to "ReLU"
     "n_frame_stack": int

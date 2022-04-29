@@ -31,6 +31,7 @@
     "n_outlayers": 2,
     "bnorm": false,
     "lnorm": true,
+    "skip_lstm": false,
     "actv_fxn": "ReLU",
     "n_frame_stack": 1,
     "lr": 0.0001,

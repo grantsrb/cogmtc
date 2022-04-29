@@ -99,6 +99,7 @@ class Model(CoreModule):
         kernels=[3, 3],
         strides=[1, 1],
         paddings=[0, 0],
+        skip_lstm=False,
         *args, **kwargs
     ):
         """
@@ -174,6 +175,9 @@ class Model(CoreModule):
             paddings: tuple of ints
                 the padding of each layer of the fully connected
                 ouput networks
+            skip_lstm: bool
+                if true, the features are inluded using a skip connection
+                to the second lstm. Only applies in DoubleLSTM variants
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -210,6 +214,7 @@ class Model(CoreModule):
         self.paddings = paddings
         if isinstance(paddings, int):
             self.paddings=[paddings for i in range(len(depths))]
+        self.skip_lstm = skip_lstm
 
     def initialize_conditional_variables(self):
         """
@@ -822,7 +827,6 @@ class VaryLSTM(Model):
             torch.cat(langs, dim=2)
         )
 
-
 class DoubleVaryLSTM(VaryLSTM):
     """
     A model with two LSTMs. One for each the language and action outputs.
@@ -831,7 +835,10 @@ class DoubleVaryLSTM(VaryLSTM):
         super().__init__(*args, **kwargs)
         self.n_lstms = 2
         self.lstm0 = self.lstm
-        self.lstm1 = nn.LSTMCell(self.h_size, self.h_size)
+        size = self.h_size
+        if self.skip_lstm: 
+            size = self.flat_size+2*self.h_size
+        self.lstm1 = nn.LSTMCell(size, self.h_size)
         self.reset(1)
         self.make_actn_dense()
         self.make_lang_denses()
@@ -923,7 +930,9 @@ class DoubleVaryLSTM(VaryLSTM):
         if self.lnorm:
             c0 = self.layernorm_c(c0)
             h0 = self.layernorm_h(h0)
-        h1, c1 = self.lstm1( h0, (self.hs[1], self.cs[1]) )
+        inpt = h0
+        if self.skip_lstm: inpt = torch.cat([cat,inpt],dim=-1)
+        h1, c1 = self.lstm1( inpt, (self.hs[1], self.cs[1]) )
         if self.lstm_lang_first:
             langs = []
             for dense in self.lang_denses:
@@ -988,6 +997,7 @@ class SimpleLSTM(VaryLSTM):
             "strides":[1, 1],
             "paddings":[0, 0],
             "h_mult":2,
+            "skip_lstm": False,
         }
         super().__init__( *args, **kwargs )
         assert self.bnorm == False,\
@@ -1060,6 +1070,8 @@ class DoubleLSTM(DoubleVaryLSTM):
             "kernels":[3, 3],
             "strides":[1, 1],
             "paddings":[0, 0],
+            "h_mult":2,
+            "skip_lstm": False,
         }
         super().__init__( *args, **kwargs )
         if self.drop_p > 0:
