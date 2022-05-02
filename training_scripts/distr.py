@@ -17,14 +17,14 @@ or
 
 {
     "devices": [0,1,2],
-    "split_keys": ["use_count_words"],
+    "key_order": ["use_count_words"],
     "hyperparams": "path/to/hyperparams.json",
     "hyperranges": "path/to/hyperranges.json"
 }
 """
 import sys
 import os
-from cogmtc.utils.utils import load_json, save_json
+from cogmtc.utils.utils import load_json, save_json, try_key
 from cogmtc.utils.training import fill_hyper_q
 from datetime import datetime
 from collections import deque
@@ -91,8 +91,9 @@ def split_ranges(meta):
     devices = meta["devices"]
 
     # Get queue of hyperparameter combinations divided by importance
-    key_importances = meta["key_order"]
-    for k in ranges.keys()-set(meta["key_order"]):
+    key_order = try_key(meta,"key_order",[])
+    key_importances = [*key_order]
+    for k in ranges.keys()-set(key_order):
         key_importances.append(k)
     hyper_q = deque()
     hyper_q = fill_hyper_q({},ranges,key_importances,hyper_q,idx=0)
@@ -128,4 +129,4 @@ if __name__ == "__main__":
 
     meta = load_json(sys.argv[2])
     rng_paths = split_ranges(meta)
-    #distr_ranges(sys.argv[1], meta, rng_paths)
+    distr_ranges(sys.argv[1], meta, rng_paths)
