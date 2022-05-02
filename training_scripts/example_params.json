@@ -35,7 +35,7 @@
     "skip_lstm": false,
     "actv_fxn": "ReLU",
     "n_frame_stack": 1,
-    "lr": 0.0001,
+    "lr": 0.00025,
     "l2": 0.001,
     "lang_p": 0.5,
     "conv_noise": 0,
@@ -85,7 +85,6 @@
     "factor": 0.9,
     "patience": 10,
     "threshold": 0.001,
-    "loss_fxn": "cross_entropy",
     "preprocessor": "null_prep",
     "best_by_key": "val_acc_avg"
 }

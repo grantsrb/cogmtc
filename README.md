@@ -344,9 +344,6 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         learning rate change is more likely to occur.
     "min_lr": float
         the minimum learning rate allowed by the scheduler
-    "loss_fxn": str
-        the name of the function from the torch.nn.functional package
-        to use for the loss function. i.e. "cross_entropy" or "mse_loss"
     "preprocessor": str
         the name of the preprocessing function. this function operates
         directly on observations from the environment before they are
