@@ -1,7 +1,7 @@
 """
-This script takes a metaranges file and distributes the specified 
-hyperranges (within the metaranges) to each of the gpus with its own
-tmux session.
+This script takes a metaranges file and equally distributes each combo
+of hyperranges (specified within the metaranges) to a tmux session
+running on its own gpu.
 
     $ python3 distr.py main.py metaranges.json
 
@@ -9,7 +9,6 @@ The meta ranges should have the following structure within a .json:
 
 {
     "devices": [0,1,2],
-    "split_key": "use_count_words",
     "hyperparams": "path/to/hyperparams.json",
     "hyperranges": "path/to/hyperranges.json"
 }
@@ -26,7 +25,10 @@ or
 import sys
 import os
 from cogmtc.utils.utils import load_json, save_json
+from cogmtc.utils.training import fill_hyper_q
 from datetime import datetime
+from collections import deque
+import math
 
 # os.system("tmux new -s tes")
 # tmux new-session -d -s \"myTempSession\" /opt/my_script.sh
@@ -70,7 +72,7 @@ def split_ranges(meta):
                 path to a hyperparams file
             "hyperranges": str
                 path to a hyperranges file
-            "split_key": str
+            "key_order": str
                 the key that should be distributed among devices
             "devices": list of int
                 the potential cuda device indices to train on
@@ -86,27 +88,34 @@ def split_ranges(meta):
     save_path[-1] = load_json(meta["hyperparams"])["exp_name"]
     save_path = "/".join(save_path)
 
-    if "split_keys" in meta:
-        splt_keys = set(meta["split_keys"])
-    elif "split_key" in meta:
-        splt_keys = [meta["split_key"]]
-    else:
-        assert False, "split_key or split_keys must be in metaparameters"
-    keys = list(filter(lambda x: x not in splt_keys, ranges.keys()))
-    no_splt = {k:ranges[k] for k in keys}
     devices = meta["devices"]
 
+    # Get queue of hyperparameter combinations divided by importance
+    key_importances = meta["key_order"]
+    for k in ranges.keys()-set(meta["key_order"]):
+        key_importances.append(k)
+    hyper_q = deque()
+    hyper_q = fill_hyper_q({},ranges,key_importances,hyper_q,idx=0)
+
     # Divide up hyperranges equally amongst GPUs
+    n_combos = math.ceil(len(hyper_q)/len(devices))
     rng_paths = []
-    range_dict = {i:{**no_splt} for i in devices}
-    for splt_key in splt_keys:
-        splt_len = len(ranges[splt_key])
-        n_vals = splt_len//len(devices) # Number of split_key values per gpu
-        if splt_len % len(devices) != 0:
-            print("WARNING: SEARCH DIVIDED UNEQUALLY!!!")
-        for i,device in enumerate(devices):
-            vals = ranges[splt_key][i*n_vals:(i+1)*n_vals]
-            range_dict[device] = {splt_key: vals, **range_dict[device]}
+    range_dict = {i:None for i in devices}
+    for i,d in enumerate(devices):
+        combos = None
+        for combo in range(min(n_combos,len(hyper_q))):
+            if combos is None:
+                combos = {k:[v] for k,v in hyper_q.pop().items()}
+            else:
+                for k,v in hyper_q.pop().items():
+                    combos[k].append(v)
+        if combos is not None:
+            del combos["search_keys"]
+            range_dict[d] = { "combos": combos }
+        else:
+            del range_dict[d]
+            del devices[i]
+            print("Leaving device", d, "unused!!")
 
     # Save hyperranges to json files
     for device in devices:
@@ -119,4 +128,4 @@ if __name__ == "__main__":
 
     meta = load_json(sys.argv[2])
     rng_paths = split_ranges(meta)
-    distr_ranges(sys.argv[1], meta, rng_paths)
+    #distr_ranges(sys.argv[1], meta, rng_paths)

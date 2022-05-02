@@ -253,14 +253,34 @@ def fill_hyper_q(hyps, hyp_ranges, keys, hyper_q, idx=0):
         each search
         type: dict
         keys: name of hyperparameters to be searched over
-        values: list of values to search over for that hyperparameter
+        values: list or dict of lists of equal length
+            if a list is given, it should be a list of values to search
+            over for the hyperparameter specified by the corresponding
+            key. If a dict of lists is given, the name of the key is
+            ignored and the items in the lists are paired together for
+            a hyperparameter combination corresponding to their
+            respective keys. i.e.
+
+            {
+                "param0": [foo1],
+                "combos": {
+                    "param1":[p1,p2],
+                    "param2":[v1,v2]
+                }
+            }
+
+            will result in the folowing 2 hyperparameter search values:
+
+            {"param0": foo1, "param1": p1, "param2": v1}
+            and
+            {"param0": foo1, "param1": p2, "param2": v2}
     keys - keys of the hyperparameters to be searched over. Used to
         specify order of keys to search
-    hyper_q - Queue to hold all parameter sets
+    hyper_q - deque to hold all parameter sets
     idx - the index of the current key to be searched over
 
     Returns:
-        hyper_q: Queue of dicts `hyps`
+        hyper_q: deque of dicts `hyps`
     """
     # Base call, saves the hyperparameter combination
     if idx >= len(keys):
@@ -274,7 +294,7 @@ def fill_hyper_q(hyps, hyp_ranges, keys, hyper_q, idx=0):
             else:
                 s = prep_search_keys(str(hyps[k]))
                 hyps['search_keys'] += "_" + str(k)+s
-        hyper_q.put({**hyps})
+        hyper_q.append({**hyps})
 
     # Non-base call. Sets a hyperparameter to a new search value and
     # passes down the dict.
@@ -378,18 +398,18 @@ def hyper_search(hyps, hyp_ranges, train_fxn):
             f.write(s)
         f.write('\n')
 
-    hyper_q = Queue()
+    hyper_q = collections.deque()
     hyper_q = fill_hyper_q(hyps, hyp_ranges, list(hyp_ranges.keys()),
                                                       hyper_q, idx=0)
-    total_searches = hyper_q.qsize()
+    total_searches = len(hyper_q)
     print("n_searches:", total_searches)
 
     result_count = 0
     print("Starting Hyperloop")
-    while not hyper_q.empty():
-        print("\n\nSearches left:", hyper_q.qsize(),"-- Running Time:",
+    while not len(hyper_q)==0:
+        print("\n\nSearches left:", len(hyper_q),"-- Running Time:",
                                              time.time()-starttime)
-        hyps = hyper_q.get()
+        hyps = hyper_q.popleft()
 
         verbose = True
         if hyps['multi_gpu']:
