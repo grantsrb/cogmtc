@@ -439,6 +439,9 @@ class DataCollector:
         self.hyps['inpt_shape'] = self.validator.state_bookmark.shape
         self.hyps["actn_size"] = self.validator.env.actn_size
         self.hyps["continuous_env"] = self.validator.env.is_continuous
+        if self.hyps["continuous_env"]: self.hyps["loss_fxn"]="mse_loss"
+        else: self.hyps["loss_fxn"] = "cross_entropy"
+        self.validator.loss_fxn = getattr(F, self.hyps["loss_fxn"])
         lang_range = try_key(
             self.hyps,
             "lang_range",
@@ -916,7 +919,9 @@ class ValidationRunner(Runner):
             self.oracles[env_type] = get_oracle(**temp_hyps)
         self.rand = np.random.default_rng(self.hyps["seed"])
         self.ep_idx = 0 # Used to track which data goes with which ep
-        self.loss_fxn = getattr(F, self.hyps["loss_fxn"])
+        self.loss_fxn = lambda x: x
+        if "loss_fxn" in self.hyps:
+            self.loss_fxn = getattr(F, self.hyps["loss_fxn"])
 
     def run(self, model=None):
         """
