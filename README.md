@@ -162,6 +162,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         vector will be used for language and the first h for
         actions. Defaults to True
 
+    "output_fxn": str
+        the name of the output function for the model. if no output
+        fxn is wanted, leave as null or specify "NullOp"
     "h_size": int
         this number is used as the size of the RNN hidden vector and
         the transformer dim

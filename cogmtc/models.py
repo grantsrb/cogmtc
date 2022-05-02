@@ -201,6 +201,7 @@ class Model(CoreModule):
         self.n_heads = n_heads
         self.n_layers = n_layers
         self.seq_len = seq_len
+        if output_fxn is None: output_fxn = "NullOp"
         self.output_fxn = globals()[output_fxn]()
         self.actv_fxn = actv_fxn
         self.n_outlayers = n_outlayers

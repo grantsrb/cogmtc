@@ -26,6 +26,7 @@
     "model_type": "DoubleVaryLSTM",
     "lstm_lang_first": true,
 
+    "output_fxn": "Tanh",
     "h_size": 256,
     "h_mult": 3,
     "n_outlayers": 2,
@@ -64,6 +65,7 @@
     "targ_range": [ 1, 10 ],
     "lang_range": null,
     "actn_range": null,
+    "egocentric": false,
 
     "zipf_order": 0,
 
@@ -79,7 +81,6 @@
     "val_max_actn": false,
     "n_eval_eps": 10,
 
-    "oracle_type": "GordonOracle",
     "optim_type": "RMSprop",
     "factor": 0.9,
     "patience": 10,
