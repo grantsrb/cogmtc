@@ -66,6 +66,7 @@
     "lang_range": null,
     "actn_range": null,
     "egocentric": false,
+    "hold_outs": [3,6,8],
 
     "zipf_order": 0,
 
@@ -77,7 +78,7 @@
     "reset_trn_env": true,
     "roll_data": true,
 
-    "val_targ_range": null,
+    "val_targ_range": [1,15],
     "val_max_actn": false,
     "n_eval_eps": 10,
 

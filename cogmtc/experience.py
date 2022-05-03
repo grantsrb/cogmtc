@@ -586,6 +586,9 @@ class Runner:
                                     observations
                     "env_type": type of gym environment to be interacted
                                 with. Follows OpenAI's gym api.
+                    "hold_outs": set of ints
+                        a set of target values that should not be
+                        included in the training data
             shared_exp: dict
                 keys: str
                 vals: shared torch tensors
@@ -908,6 +911,7 @@ class ValidationRunner(Runner):
         self.hyps["targ_range"] = self.hyps["val_targ_range"]
         self.hyps["actn_range"] = self.hyps["val_targ_range"]
         self.hyps["lang_range"] = self.hyps["val_targ_range"]
+        self.hyps["hold_outs"] = set()
         print("Validation runner target range:",self.hyps["targ_range"])
         self.phase = phase
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])

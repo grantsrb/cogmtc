@@ -275,6 +275,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the range of potential target counts for training the action
         model during phases other than 0. both low and high are
         inclusive. only applies to gordongames variants.
+    "hold_outs": set (or list) of ints
+        the number of targets to hold out during training
 
     "zipf_order": float or None
         if greater than 0, the targets are drawn proportionally to the
