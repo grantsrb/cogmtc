@@ -32,6 +32,6 @@ if __name__ == "__main__":
     for env_type in hyps["env_types"]:
         print("EnvType:", env_type)
         val_runner.oracle = val_runner.oracles[env_type]
-        state = val_runner.create_new_env(env_type=env_type,n_targs=None)
-        model.reset(1)
-        data = val_runner.collect_data(model, state, None)
+        data = val_runner.collect_data(
+            model, n_targs=None, env_type=env_type
+        )

@@ -996,13 +996,7 @@ class ValidationRunner(Runner):
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
-                state = self.create_new_env(
-                    n_targs=n_targs,
-                    env_type=env_type
-                )
-                model.reset(1)
-
-                data = self.collect_data(model, state, n_targs)
+                data = self.collect_data(model, env_type, n_targs)
                 lang_labels = get_lang_labels(
                     data["n_items"],
                     data["n_targs"],
@@ -1198,15 +1192,24 @@ class ValidationRunner(Runner):
             mode="a"
         )
 
-    def collect_data(self, model, state, n_targs=None, incl_hs=False):
+    def collect_data(self, model,
+                           env_type,
+                           n_targs=None,
+                           incl_hs=False,
+                           to_cpu=False):
         """
         Performs the actual rollouts using the model
 
         Args:
             model: Module
-            state: ndarray ? I think
+            env_type: str
             n_targs: int
                 the number of targets for the environment to display
+            incl_hs: bool
+                if true, h vectors are collected from the model
+            to_cpu: bool
+                if true, the langpreds and actnpreds are placed on
+                the cpu
         Returns:
             data: dict
                 keys: str
@@ -1258,6 +1261,11 @@ class ValidationRunner(Runner):
             "is_animating":[],
             "ep_idx":[],
         }
+        state = self.create_new_env(
+            n_targs=n_targs,
+            env_type=env_type
+        )
+        model.reset(1)
         if incl_hs: self.record_hs(model=model,data=data)
         ep_count = 0
         n_eps = try_key(self.hyps,"n_eval_eps",10)
@@ -1278,6 +1286,7 @@ class ValidationRunner(Runner):
             actn_pred, lang_pred = model.step(inpt, cdtnl)
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
+            if to_cpu: data["actn_preds"][-1] = actn_pred.cpu()
             # Batch Size is only ever 1
             # lang_pred: (1,1,L)
             if model.n_lang_denses == 1:
@@ -1286,6 +1295,7 @@ class ValidationRunner(Runner):
                 lang = torch.stack(lang_pred, dim=0)
             # lang: (N,1,L) where N is number of lang models
             data["lang_preds"].append(lang)
+            if to_cpu: data["lang_preds"][-1] = lang.cpu()
             actn = self.get_action(actn_pred)
             # get target action
             targ = self.oracle(self.env)

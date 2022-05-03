@@ -1,6 +1,7 @@
 import torch
 import pickle
-import cogmtc.utils.utils as utils
+import cogmtc.models
+import cogmtc.utils.utils as cuu
 import os
 
 BEST_CHECKPT_NAME = "best_checkpt_0.pt.best"
@@ -234,7 +235,7 @@ def load_checkpoint(path, use_best=False, phase=None):
     path = os.path.expanduser(path)
     hyps = None
     if os.path.isdir(path):
-        hyps = utils.load_json(os.path.join(path, "hyperparams.json"))
+        hyps = cuu.load_json(os.path.join(path, "hyperparams.json"))
         best_path = os.path.join(path,BEST_CHECKPT_NAME)
         if use_best and os.path.exists(best_path):
             path = best_path 
@@ -255,7 +256,7 @@ def load_checkpoint(path, use_best=False, phase=None):
         torch.save(data, path) 
     return data
 
-def load_model(path, models, load_sd=True, use_best=False,
+def load_model(path, models=None, load_sd=True, use_best=False,
                                            phase=None,
                                            verbose=True):
     """
@@ -266,11 +267,11 @@ def load_model(path, models, load_sd=True, use_best=False,
     path: str
         either .pt,.p, or .pth checkpoint file; or path to save folder
         that contains multiple checkpoints
-    models: dict (just pass `globals()` as the arg)
+    models: dict (just pass `globals()` as the arg) or None
         A dict of the potential model classes. This function is
         easiest if you import each of the model classes in the calling
         script and simply pass `globals()` as the argument for this
-        parameter
+        parameter. If None is argued, `globals()` is used instead.
 
         keys: str
             the class names of the potential models
@@ -291,7 +292,8 @@ def load_model(path, models, load_sd=True, use_best=False,
     if 'hyps' in data:
         kwargs = data['hyps']
     else:
-        kwargs = utils.load_json(os.path.join(path, "hyps.json"))
+        kwargs = cuu.load_json(os.path.join(path, "hyps.json"))
+    if models is None: models = cogmtc.models.__dict__
     model = models[kwargs['model_type']](**kwargs)
     if "state_dict" in data and load_sd:
         try:
@@ -317,7 +319,7 @@ def get_hyps(folder):
     """
     folder = os.path.expanduser(folder)
     hyps_json = os.path.join(folder, "hyperparams.json")
-    hyps = utils.load_json(hyps_json)
+    hyps = cuu.load_json(hyps_json)
     return hyps
 
 def load_hyps(folder):
