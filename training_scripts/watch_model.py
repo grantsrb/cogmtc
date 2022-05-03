@@ -1,3 +1,4 @@
+import time
 import torch
 import numpy as np
 import cogmtc
@@ -19,6 +20,7 @@ if __name__ == "__main__":
     )
     hyps = checkpt["hyps"]
     hyps["n_eval_steps"] = 1000
+    hyps["seed"] = int(time.time())
     hyps["render"] = True
     model = globals()[hyps["model_type"]](**hyps).cuda()
     model.load_state_dict(checkpt["state_dict"])
