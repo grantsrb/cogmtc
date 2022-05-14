@@ -8,9 +8,17 @@ import numpy as np
 from cogmtc.models import NullModel
 from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
-from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs
+from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers
 from collections import deque
 import matplotlib.pyplot as plt
+import math
+
+INEQUALITY = 0
+ENGLISH = 1
+PIRAHA = 2
+RANDOM = 3
+DUPLICATES = 4
+NUMERAL = 5
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")
@@ -196,7 +204,8 @@ class ExperienceReplay(torch.utils.data.Dataset):
             self.exp["n_items"],
             self.exp["n_targs"],
             max_label=self.hyps["lang_size"]-1,
-            use_count_words=self.hyps["use_count_words"]
+            use_count_words=self.hyps["use_count_words"],
+            max_char_seq=self.hyps["max_char_seq"]
         )
         return self.exp
 
@@ -434,6 +443,7 @@ class DataCollector:
             phase_q=self.phase_q,
             terminate_q=self.terminate_q
         )
+        print("val runner created")
         self.validator.create_new_env()
         self.obs_shape = self.validator.env.shape
         self.hyps['inpt_shape'] = self.validator.state_bookmark.shape
@@ -449,15 +459,34 @@ class DataCollector:
         )
         if lang_range is None: lang_range = self.hyps["targ_range"]
         self.hyps["lang_size"] = lang_range[1]+1 # plus one includes zero
+        self.hyps["max_char_seq"] = 1
         # If comparison or piraha language, must change lang_size
-        if int(self.hyps["use_count_words"]) == 0:
+        if int(self.hyps["use_count_words"]) == INEQUALITY:
             self.hyps["lang_size"] = 3
-        elif int(self.hyps["use_count_words"]) == 2:
+        elif int(self.hyps["use_count_words"]) == PIRAHA:
             self.hyps["lang_size"] = 4
-        elif int(self.hyps["use_count_words"]) == 4:
+        elif int(self.hyps["use_count_words"]) == DUPLICATES:
             self.hyps["lang_size"] = self.hyps["lang_size"]*2
+        if int(self.hyps["use_count_words"]) == NUMERAL:
+            base = self.hyps["numeral_base"]
+            # Add 1 to base for the STOP token
+            self.hyps["lang_size"] = base+1
+            # Attempting to determine the maximum character sequence
+            # length for predicting the systematic number system with
+            # base `hyps["numeral_base"]`. We add 1 to the sequence
+            # length for the STOP token and 1 more for testing
+            # generalization
+            mcs = int(math.ceil(math.log((lang_range[1]+1),base))+2)
+            self.hyps["max_char_seq"] = mcs
+        else:
+            self.hyps["numeral_base"] = None
+            self.hyps["max_char_seq"] = None
+            self.hyps["lstm_lang"] = None
+        self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
+        self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
         # Initialize Experience Replay
         self.exp_replay = ExperienceReplay(hyps)
+        print("exp_replay created")
         # Initialize runners
         # We add one here because the validation environment defaults
         # to the argued seed without offset
@@ -477,6 +506,7 @@ class DataCollector:
                 terminate_q=self.terminate_q
             )
             self.runners.append(runner)
+        print("runners created")
 
         # Initiate Data Collection
     def init_runner_procs(self, model):
@@ -1001,7 +1031,8 @@ class ValidationRunner(Runner):
                     data["n_items"],
                     data["n_targs"],
                     max_label=model.lang_size-1,
-                    use_count_words=self.hyps["use_count_words"]
+                    use_count_words=self.hyps["use_count_words"],
+                    max_char_seq=self.hyps["max_char_seq"]
                 )
                 drops = ExperienceReplay.get_drops(
                     self.hyps,
@@ -1010,17 +1041,39 @@ class ValidationRunner(Runner):
                 )
                 data["lang_targs"] = lang_labels
                 data["drops"] = drops
-                self.save_lang_data(
-                  data, lang_labels, drops, epoch, self.phase, env_type
-                )
-                self.save_actn_data(data, epoch, self.phase, env_type)
+
+                # Save epoch results
                 self.save_epoch_data(
                     data,
                     epoch,
                     self.phase,
                     n_targs,
-                    env_type
+                    env_type,
+                    base=self.hyps["numeral_base"],
+                    max_char_seq=self.hyps["max_char_seq"]
                 )
+
+                # Convert language predictions to appropriate form
+                avg = data["lang_preds"].mean(0)
+                if self.hyps["use_count_words"]==NUMERAL:
+                    base = self.hyps["numeral_base"]
+                    lang = avg.reshape(len(avg), -1, base+1)
+                    lang = torch.argmax(lang, dim=-1) # (N,C)
+                    lang = convert_numeral_array_to_numbers(
+                        lang.detach().cpu(), base=base
+                    )
+                    lang_labels = convert_numeral_array_to_numbers(
+                        lang_labels, base=base
+                    )
+                else:
+                    lang = torch.argmax(avg, dim=-1) # (N,)
+                data["lang_preds"] = lang
+
+                # Save the results
+                self.save_lang_data(
+                  data, lang_labels, drops, epoch, self.phase, env_type
+                )
+                self.save_actn_data(data, epoch, self.phase, env_type)
 
     def save_lang_data(self,
                        data,
@@ -1037,9 +1090,8 @@ class ValidationRunner(Runner):
 
         Args:
             data: dict
-                lang_preds: torch FloatTensor (K,N, L)
-                    the language prediction logits. K is the number
-                    of language outputs within the model
+                lang_preds: torch FloatTensor (N,)
+                    the max of the language prediction logits.
                 n_targs: torch LongTensor (N,)
                     the number of target objects on the grid at this step
                     of the episode
@@ -1053,6 +1105,7 @@ class ValidationRunner(Runner):
                     1 if episode ended on this step, 0 otherwise
                 is_animating: torch LongTensor (N,)
                     1 if step is animation step
+            labels: tensor (
             epoch: int
             phase: int
             save_name: str
@@ -1068,10 +1121,10 @@ class ValidationRunner(Runner):
             "is_animating":None,
             "ep_idx": None,
         }
-        idxs = drops>=1
+        idxs = (drops>=1)
         if idxs.float().sum() <= 1: return # ensure some data to record
-        lang = torch.argmax(data["lang_preds"].mean(0), dim=-1) # (N,)
 
+        lang = data["lang_preds"]
         inpts["pred"] = lang[idxs]
         inpts["label"] = labels[idxs]
         inpts["n_targs"] = data["n_targs"][idxs]
@@ -1144,6 +1197,8 @@ class ValidationRunner(Runner):
                         phase,
                         n_targs,
                         env_type,
+                        base=None,
+                        max_char_seq=None,
                         save_name="epoch_stats.csv"):
         """
         Saves the loss and acc stats averaged over all episodes in the
@@ -1157,6 +1212,12 @@ class ValidationRunner(Runner):
             n_targs: int
                 the number of targets that this data pertains to
             env_type: str
+            base: int or None
+                the numeral base of the system if use_count_words==
+                NUMERAL
+            max_char_seq: int or None
+                the number of numeral predictions per sample if using
+                use_count_words==NUMERAL
             save_name: str
         """
         with torch.no_grad():
@@ -1170,7 +1231,9 @@ class ValidationRunner(Runner):
                 n_targs=data["n_targs"],
                 n_items=data["n_items"],
                 prepender="",
-                loss_fxn=self.loss_fxn
+                loss_fxn=self.loss_fxn,
+                base=base,
+                max_char_seq=max_char_seq
             )
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}

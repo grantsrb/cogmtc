@@ -37,10 +37,13 @@ if __name__ == "__main__":
     model.reset()
     val_runner = cogmtc.experience.ValidationRunner(hyps)
     val_runner.phase = 2
-    state = val_runner.create_new_env(n_targs=None)
     model.reset(1)
 
-    data = val_runner.collect_data(model, state, None)
+    env_type = hyps["env_types"][0]
+    val_runner.oracle = val_runner.oracles[env_type]
+    data = val_runner.collect_data(
+        model, n_targs=None, env_type=env_type
+    )
     torch.cuda.empty_cache()
 
     frames = np.asarray(data["states"])

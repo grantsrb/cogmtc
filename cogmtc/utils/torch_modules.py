@@ -138,3 +138,43 @@ class NullOp(nn.Module):
 
     def forward(self, x):
         return x
+
+class ContainedLSTM(nn.Module):
+    """
+    Contained lstms handle all recurrent vectors for you. You simply
+    pass the input in to the forward function with the number of
+    outputs you would like. It returns the outputs as a tensor (B,N,H).
+    It also resets the h and c vectors at the beginning of each forward
+    pass.
+    """
+    def __init__(self, inpt_size, h_size, lnorm=True, *args, **kwargs):
+        super().__init__()
+        self.inpt_size = inpt_size
+        self.h_size = h_size
+        self.lstm = nn.LSTMCell(self.inpt_size, self.h_size)
+        self.lnorm = lnorm
+        if self.lnorm:
+            self.lnorm_h = nn.LayerNorm(self.h_size)
+            self.lnorm_c = nn.LayerNorm(self.h_size)
+        self.register_buffer('h', torch.zeros(1,self.h_size))
+        self.register_buffer('c', torch.zeros(1,self.h_size))
+
+    def forward(self, x, n):
+        """
+        Args:
+            x: torch tensor (B, I)
+            n: int
+                the number of recurrent loops
+        Returns:
+            fx: torch tensor (B, N, H)
+        """
+        h = self.h.repeat(len(x), 1)
+        c = self.c.repeat(len(x), 1)
+        outpts = []
+        for _ in range(n):
+            if self.lnorm:
+                h,c = self.lnorm_h(h), self.lnorm_c(c)
+            h, c = self.lstm(x, (h,c))
+            outpts.append(h)
+        return torch.stack(outpts, dim=1)
+

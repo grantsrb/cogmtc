@@ -16,6 +16,7 @@ def get_fcnet(inpt_size,
               noise=0,
               drop_p=0,
               bnorm=False,
+              lnorm=False,
               actv_fxn="ReLU"):
     """
     Defines a simple fully connected Sequential module
@@ -35,6 +36,8 @@ def get_fcnet(inpt_size,
             the probability of dropping a node
         bnorm: bool
             if true, batchnorm is included before each relu layer
+        lnorm: bool
+            if true, layer norm is included before each relu layer
     """
     outsize= h_size if n_layers > 1 else outp_size
     block = [ nn.Linear(inpt_size, outsize) ]
@@ -42,6 +45,7 @@ def get_fcnet(inpt_size,
     for i in range(1, n_layers):
         block.append( GaussianNoise(noise) )
         if bnorm: block.append( nn.BatchNorm1d(outsize) )
+        if lnorm: block.append( nn.LayerNorm(outsize) )
         block.append( nn.Dropout(drop_p) )
         block.append( globals()[actv_fxn]() )
         block.append( ScaleShift((outsize,)) )
@@ -100,6 +104,8 @@ class Model(CoreModule):
         strides=[1, 1],
         paddings=[0, 0],
         skip_lstm=False,
+        max_char_seq=1,
+        lstm_lang=False,
         *args, **kwargs
     ):
         """
@@ -178,6 +184,14 @@ class Model(CoreModule):
             skip_lstm: bool
                 if true, the features are inluded using a skip connection
                 to the second lstm. Only applies in DoubleLSTM variants
+            max_char_seq: int or None
+                if int, it is the number of language tokens to predict
+                at every step
+            lstm_lang: bool
+                if you want to use an additional lstm to output the
+                language for numeral systems, set this to true. if false
+                and using a numeral system, a single dense net makes
+                all numeral predictions at the same time.
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -201,6 +215,8 @@ class Model(CoreModule):
         self.n_heads = n_heads
         self.n_layers = n_layers
         self.seq_len = seq_len
+        self.max_char_seq = max_char_seq
+        self.lstm_lang = lstm_lang
         if output_fxn is None: output_fxn = "NullOp"
         self.output_fxn = globals()[output_fxn]()
         self.actv_fxn = actv_fxn
@@ -245,23 +261,42 @@ class Model(CoreModule):
             noise=self.dense_noise,
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
-            bnorm=self.bnorm
+            bnorm=self.bnorm,
+            lnorm=self.lnorm
         )
 
     def make_lang_denses(self, inpt_size=None):
         if inpt_size==None: inpt_size = self.h_size
         self.lang_denses = nn.ModuleList([])
+        # In case we're actually making multiple language predictions
+        # from a single output
+        lang_size = self.lang_size
+        if self.max_char_seq is not None and self.max_char_seq>1:
+            if not self.lstm_lang:lang_size=lang_size*self.max_char_seq
         for i in range(self.n_lang_denses):
-            dense = get_fcnet(
-                inpt_size=inpt_size,
-                outp_size=self.lang_size,
-                n_layers=self.n_outlayers,
-                h_size=self.h_size*self.h_mult,
-                noise=self.dense_noise,
-                drop_p=self.drop_p,
-                actv_fxn=self.actv_fxn,
-                bnorm=self.bnorm
-            )
+            if self.lstm_lang:
+                dense = NumeralLangLSTM(
+                    inpt_size=inpt_size,
+                    h_size=self.h_size,
+                    lang_size=lang_size,
+                    max_char_seq=self.max_char_seq,
+                    n_outlayers=self.n_outlayers,
+                    h_mult=self.h_mult,
+                    drop_p=self.drop_p,
+                    actv_fxn=self.actv_fxn,
+                    lnorm=self.lnorm,
+                )
+            else:
+                dense = get_fcnet(
+                    inpt_size=inpt_size,
+                    outp_size=lang_size,
+                    n_layers=self.n_outlayers,
+                    h_size=self.h_size*self.h_mult,
+                    noise=self.dense_noise,
+                    drop_p=self.drop_p,
+                    actv_fxn=self.actv_fxn,
+                    bnorm=self.bnorm
+                )
             self.lang_denses.append(dense)
 
     @property
@@ -340,6 +375,67 @@ class Model(CoreModule):
             lang: torch Float Tensor (B, S, L)
         """
         pass
+
+class NumeralLangLSTM(nn.Module):
+    """
+    This is a module to assist in producing numerals recurrently within
+    the current project structure.
+    """
+    def __init__(self, inpt_size,
+                       h_size,
+                       lang_size,
+                       max_char_seq=4,
+                       n_outlayers=1,
+                       h_mult=3,
+                       drop_p=0,
+                       actv_fxn="ReLU",
+                       lnorm=True,
+                       *args,**kwargs):
+        """
+        Args:
+            inpt_size: int
+            h_size: int
+            lang_size: int
+            max_char_seq: int
+            n_outlayers: int
+            drop_p: float
+            lnorm: bool
+        """
+        super().__init__()
+        self.inpt_size = inpt_size
+        self.h_size = h_size
+        self.lang_size = lang_size
+        self.n_loops = max_char_seq
+        self.n_outlayers = n_outlayers
+        self.h_mult = h_mult
+        self.lnorm = lnorm
+        self.drop_p = drop_p
+        self.actv_fxn = actv_fxn
+        self.lstm = ContainedLSTM(
+            self.h_size,self.h_size,lnorm=self.lnorm
+        )
+        self.dense = get_fcnet(
+            inpt_size=self.h_size,
+            outp_size=self.lang_size,
+            n_layers=self.n_outlayers,
+            h_size=self.h_size*self.h_mult,
+            noise=0,
+            drop_p=self.drop_p,
+            actv_fxn=self.actv_fxn,
+            lnorm=self.lnorm
+        )
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch tensor (B, H)
+        Returns:
+            fx: torch tensor (B, N*lang_size)
+        """
+        fx = self.lstm(x, self.n_loops)
+        B,N,H = fx.shape
+        fx = self.dense(fx.reshape(-1,H))
+        return fx.reshape(B,-1)
 
 class NullModel(Model):
     def __init__(self, *args, **kwargs):

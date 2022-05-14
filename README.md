@@ -118,7 +118,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         of `trn_whls_p` for a explanation of how this value is used in
         training.
 
-    "use_count_words": int [0, 1, or 2]
+    "use_count_words": int [0, 1, 2, 3, 4, or 5]
         this determines what type of count words should be used. If 0,
         the model learns to count by issuing a less-than, equal-to, or
         greater-than prediction of the number of items relative to
@@ -130,6 +130,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         100% of the time for numbers 0,1,and 2. But for numbers 3 and
         greater, either label 2 or 3 is used for the count word with
         a probability matching the published values.
+        3: random labels
+        4: two equivalent labels exist for every label
+        5: numeral system with argued base `numeral_base`
+    "numeral_base": int or None
+        if base is argued and use_count_words is 5, lang_preds are
+        sequential and are trained to output the numerals inline with
+        the argued base instead of one-hot labels.
     "skip_first_phase": bool
         if true, the training will skip phase 0 and go straight to
         phase 1 or 2 (depending on the value of `second_phase`).
@@ -154,6 +161,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "model_type": str
         the name of the model class that you wish to use for the
         training. i.e. "SimpleCNN"
+    "lstm_lang": bool
+        if true, and using numeral system, the language output will be
+        done using an LSTM rather than a dense network.
     "lstm_lang_first": bool
         only used in multi-lstm model types. If true, the h
         vector from the first LSTM will be used as the input

@@ -1,5 +1,5 @@
 from cogmtc.experience import DataCollector
-from cogmtc.models import * # SimpleCNN, SimpleLSTM
+import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
 from cogmtc.utils.save_io import load_checkpoint
 from cogmtc.utils.utils import try_key, get_loss_and_accs
@@ -123,7 +123,7 @@ def make_model(hyps):
         hyps: dict
             dict of hyperparameters. See `README.md` for details
     """
-    model = globals()[hyps["model_type"]](**hyps).to(DEVICE)
+    model = cogmtc.models.__dict__[hyps["model_type"]](**hyps).to(DEVICE)
     folder = try_key(hyps, "resume_folder", None)
     init_checkpt = try_key(hyps, "init_checkpt", None)
     lang_checkpt = try_key(hyps, "lang_checkpt", None)
@@ -206,7 +206,7 @@ def training_loop(n_epochs,
         if epoch > start_epoch:
             if verbose:
                 print("\nAwaiting validator for epoch", epoch-1)
-                if type(model) == TestModel:
+                if type(model) == cogmtc.models.TestModel:
                     print("Len data strings dict:", len(model.data_strings))
                     for k,v in model.data_strings.items():
                         print("v:", v)
@@ -387,7 +387,8 @@ class Trainer:
 
             # Testing
             #############
-            if self.hyps["exp_name"]=="test" and self.hyps["static_render"]:
+            if self.hyps["exp_name"]=="test" and\
+                            try_key(self.hyps,"static_render",False):
                 grabs = data["grabs"]
                 #print("train grabs:")
                 #for row in range(len(drops)):
@@ -457,7 +458,11 @@ class Trainer:
                 n_targs=n_targs,
                 n_items=n_items,
                 prepender="train",
-                lang_p=self.hyps["lang_p"]
+                lang_p=self.hyps["lang_p"],
+                # this is set to None if not using NUMERAL system
+                base=self.hyps["numeral_base"],
+                # this is set to None if not using NUMERAL system
+                max_char_seq=self.hyps["max_char_seq"]
             )
             # Backprop and update
             loss.backward()

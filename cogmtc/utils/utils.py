@@ -1,3 +1,4 @@
+import math
 import torch.nn.functional as F
 import numpy as np
 import torch
@@ -314,7 +315,11 @@ def get_duplicate_labels(labels, n_items, max_label):
         labels[idx] = i+rand_vals[idx]
     return labels
 
-def get_lang_labels(n_items, n_targs, max_label, use_count_words):
+def get_lang_labels(n_items,
+                    n_targs,
+                    max_label,
+                    use_count_words,
+                    max_char_seq=1):
     """
     Determines the language labels based on the type of training.
 
@@ -325,11 +330,24 @@ def get_lang_labels(n_items, n_targs, max_label, use_count_words):
             the count of the targs on the board
         max_label: int
             the maximum allowed language label. can usually use
-            model.lang_size-1
+            model.lang_size-1. Assumes max_label-1 is the base of the
+            positional number system when use_count_words is 5
+        use_count_words: int
+            the type of language that the model is using
+        max_char_seq: int
+            the longest character sequence that the model will ever
+            predict. Only matters when use_count_words is 5
     Returns:
-        labels: torch Tensor (N,)
+        labels: torch Tensor (N,) or (N,M)
+            returns tensor of shape (N,M) when use_count_words is 5
     """
     labels = n_items.clone()
+    # positional numeral system
+    if int(use_count_words) == 5:
+        base = max_label # max_label is STOP token
+        mcs = max_char_seq
+        labels = get_numeral_labels(labels, base, mcs)
+        return labels
     labels[labels>max_label] = max_label
     if int(use_count_words) == 0:
         labels[n_items<n_targs] = 0
@@ -348,6 +366,92 @@ def get_lang_labels(n_items, n_targs, max_label, use_count_words):
         labels = get_duplicate_labels(labels, n_items, max_label)
     return labels
 
+def get_numeral_labels(n_items,numeral_base=4,char_seq_len=4):
+    """
+    Vectorized number base changing system. Creates a tensor of
+    `char_seq_len` in the last dimension. Fills each row of the tensor
+    with the digits of the new number base. Appends a stop token, which
+    is represented by the `numeral_base` value, to the end of each
+    sequence of digits. Fills out the rest of the spaces with -1's.
+
+    Args:
+        n_items: torch Tensor (B,N) or (N,)
+            the count of the items on the board in decimal numbers
+        numeral_base: int
+            the base of the numeral system. 10 is decimal
+        char_seq_len: int
+            the longest character sequence that the model will ever
+            predict.
+    Returns:
+        labels: torch Long Tensor (N, char_seq_len)
+            sequence of digits representing the new number in base
+            `numeral_base`
+    """
+    og_shape = n_items.shape
+    if len(og_shape)>1:
+        n_items = n_items.reshape(-1)
+    N = n_items.shape[0]
+    # negative ones denote null token
+    labels = -torch.ones(N, char_seq_len)
+    remains = n_items
+    logs = torch.log(remains)/math.log(numeral_base)
+    logs[remains==0] = 0
+    for i in range(char_seq_len):
+        floor_logs = torch.floor(logs)
+        divs = numeral_base**floor_logs
+        floors = torch.floor(remains/divs)
+        labels[logs>=0,i] = floors[logs>=0]
+        remains = remains-(floors*divs)
+        logs -= 1
+    argmaxes = torch.argmax((labels==-1).long(), dim=-1)
+    # stop token is numeral_base
+    labels[torch.arange(len(labels)).long(),argmaxes] = numeral_base
+    return labels.reshape(*og_shape, char_seq_len).long()
+
+def change_base(n, base):
+    """
+    Slow, non-vectorized base change code for testing.
+
+    Args:
+        n: int
+            number to change base
+        base: int
+    """
+    n = int(n)
+    if n == 0: return 0
+    base = int(base)
+    rem = n
+    chars = ""
+    while rem > 0:
+        new_rem = rem//base
+        chars = str(rem-new_rem*base) + chars
+        rem = new_rem
+    return int(chars)
+
+def convert_numeral_array_to_numbers(numerals, base):
+    """
+    converts a numeral array (representing a single number in any base)
+    to a single number. i.e. the numeral array in base 4
+    [1, 3, 1, 4, -1] will be converted to [131].
+
+    Args:
+        numerals: torch long tensor (..., B)
+            the numeral array created from `get_numeral_labels`. The
+            final non-negative character is ignored, all trailing
+            negative charaters are ignored.
+        base: int
+    """
+    numerals = numerals.clone()
+    numerals[numerals<0] = 0
+    nums = torch.zeros(numerals.shape[:-1])
+    tens = torch.ones_like(nums)*10
+    exps = torch.argmax((numerals==base).long(),dim=-1)-1
+    numerals[numerals==base] = 0
+    for i in range(numerals.shape[-1]):
+        nums += (tens**exps)*numerals[...,i]
+        exps -= 1
+    return nums
+
 def get_loss_and_accs(phase,
                       actn_preds,
                       lang_preds,
@@ -358,7 +462,9 @@ def get_loss_and_accs(phase,
                       n_items,
                       prepender="",
                       loss_fxn=F.cross_entropy,
-                      lang_p=0.5):
+                      lang_p=0.5,
+                      base=None,
+                      max_char_seq=None):
     """
     Calculates the loss and accuracies depending on the phase of
     the training.
@@ -395,6 +501,11 @@ def get_loss_and_accs(phase,
         lang_p: float
             the language portion of the loss. only a factor for phase
             2 trainings
+        base: int or None
+            if using numeral system, this is the numeral base
+        max_char_seq: int or None
+            if using numeral system, this is the maximum number of
+            prediction that the language model makes per time step
     Returns:
         loss: torch float tensor (1,)
             the appropriate loss for the phase
@@ -409,7 +520,6 @@ def get_loss_and_accs(phase,
         actn_targs = actn_targs.reshape(-1, actn_targs.shape[-1])
     else:
         actn_targs = actn_targs.reshape(-1)
-    lang_targs = lang_targs.reshape(-1)
     drops = drops.reshape(-1)
     n_targs = n_targs.reshape(-1)
     n_items = n_items.reshape(-1)
@@ -425,7 +535,9 @@ def get_loss_and_accs(phase,
             lang_targs,
             drops,
             categories=n_items,
-            prepender=prepender
+            prepender=prepender,
+            base=base,
+            max_char_seq=max_char_seq
         )
     actn_accs = {}
     if phase == 1 or phase == 2:
@@ -481,19 +593,32 @@ def calc_lang_loss_and_accs(preds,
                             labels,
                             drops,
                             categories,
+                            base=None,
+                            max_char_seq=None,
                             prepender=""):
     """
     Args:
         preds: sequence of torch FloatTensors [(B,S,L),(B,S,L),...]
-            a list of language predictions
-        labels: torch LongTensor (B*S,)
-            language labels
+            a list of language predictions. in the case that you are
+            using a numeral system, L should be divisible by the
+            numeral base (or C from the labels shape below)
+        labels: torch LongTensor (B*S,) or (B*S*C,)
+            language labels. in the case of using a numeral system, the
+            shape of the labels should be equivalent to the batch by
+            sequence length by number of possible numerals. -1 denotes
+            outputs that should be ignored
         drops: torch LongTensor (B*S,)
             1s denote steps in which the agent dropped an item, 0s
             denote all other steps
-        categories: torch long tensor (B, N) or None
+        categories: torch long tensor (B*S,) or None
             if None, this value is ignored. Otherwise it specifies
             categories for accuracy calculations.
+        base: int or None
+            if using numeral system, this is the numeral base. argue
+            None if using one-hot system
+        max_char_seq: int or None
+            if using numeral system, this is the number of numeral
+            predictions contained within L (the preds last dim)
         prepender: str
             a string to prepend to all keys in the accs dict
     Returns:
@@ -511,12 +636,20 @@ def calc_lang_loss_and_accs(preds,
     """
     accs_array = []
     losses_array = []
-    idxs = drops==1
+    labels = labels.reshape(-1)
+    if drops.shape[0]!=labels.shape[0]:
+        n = labels.shape[0]//drops.shape[0]
+        drops = drops.repeat_interleave(n)
+        categories = categories.repeat_interleave(n)
+    idxs = (drops==1)&(labels>=0)
     categories = categories[idxs]
     labels = labels[idxs].to(DEVICE)
     loss = 0
-    for lang in preds:
-        lang = lang.reshape(-1, lang.shape[-1])
+    for j,lang in enumerate(preds):
+        if base is not None:
+            lang = lang.reshape(-1, base+1)
+        else:
+            lang = lang.reshape(-1, lang.shape[-1])
         lang = lang[idxs]
         loss += F.cross_entropy(lang, labels)
         with torch.no_grad():
