@@ -394,6 +394,8 @@ def get_numeral_labels(n_items,numeral_base=4,char_seq_len=4):
     # negative ones denote null token
     labels = -torch.ones(N, char_seq_len)
     remains = n_items
+    max_poss = numeral_base**char_seq_len - 1 # use last slot for STOP
+    remains[remains>max_poss] = max_poss
     logs = torch.log(remains)/math.log(numeral_base)
     logs[remains==0] = 0
     for i in range(char_seq_len):
