@@ -839,4 +839,6 @@ def hyps_error_catching(hyps):
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
         
+    if "hold_out" in hyps and "hold_outs" not in hyps:
+        assert False, "change hyps key 'hold_out' to 'hold_outs'"
 

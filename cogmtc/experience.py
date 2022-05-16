@@ -144,6 +144,12 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.inpt_shape = self.hyps["inpt_shape"]
         self.seq_len = self.hyps["seq_len"]
         self.randomize_order = self.hyps["randomize_order"]
+        self.hold_outs = None
+        if try_key(hyps,"hold_outs",None) is not None:
+            if len(hyps["hold_outs"])>0:
+                self.hold_outs = torch.LongTensor(
+                    list(hyps["hold_outs"])
+                )
         self.roll_data = try_key(self.hyps, "roll_data", True)
         self.share_tensors = share_tensors
         assert self.exp_len > self.seq_len,\
@@ -241,7 +247,8 @@ class ExperienceReplay(torch.utils.data.Dataset):
         data["drops"] = self.get_drops(
             self.hyps,
             data["grabs"],
-            data["is_animating"]
+            data["is_animating"],
+            self.hold_outs
         )
         return data
 
@@ -279,7 +286,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
             raise StopIteration
 
     @staticmethod
-    def get_drops(hyps, grabs, is_animating):
+    def get_drops(hyps, grabs, is_animating, hold_outs=None):
         """
         Returns a tensor denoting steps in which the agent dropped an
         item. This always means that the player is still on the item
@@ -314,6 +321,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
             is_animating: torch LongTensor (..., N)
                 0s denote the environment was not displaying the targets
                 anymore. 1s denote the targets were displayed
+            hold_outs: torch Long Tensor (D,)
+                a tensor of values that should be held out from the
+                language training
         Returns:
             drops: Long Tensor (B,N)
                 a tensor denoting if the agent dropped an item with a 1,
@@ -322,18 +332,22 @@ class ExperienceReplay(torch.utils.data.Dataset):
         if type(grabs) == type(np.asarray([])):
             grabs = torch.from_numpy(grabs).long()
         if try_key(hyps, "langall", False):
-            return torch.ones_like(grabs)
-        if try_key(hyps, "lang_targs_only", 0) == 1:
+            drops = torch.ones_like(grabs)
+        elif try_key(hyps, "lang_targs_only", 0) == 1:
             return is_animating.clone()
-        block = len(grabs)//len(hyps["env_types"])
-        drops = torch.zeros_like(grabs).long()
-        for i,env_type in enumerate(hyps["env_types"]):
-            temp = {**hyps, "env_type": env_type}
-            drops[i*block:(i+1)*block]=ExperienceReplay.get_drops_helper(
-                temp,
-                grabs[i*block:(i+1)*block],
-                is_animating[i*block:(i+1)*block]
-            )
+        else:
+            block = len(grabs)//len(hyps["env_types"])
+            drops = torch.zeros_like(grabs).long()
+            for i,env_type in enumerate(hyps["env_types"]):
+                temp = {**hyps, "env_type": env_type}
+                fxn = ExperienceReplay.get_drops_helper
+                drops[i*block:(i+1)*block] = fxn(
+                    temp,
+                    grabs[i*block:(i+1)*block],
+                    is_animating[i*block:(i+1)*block]
+                )
+        if hold_outs is not None:
+            drops[torch.isin(drops,hold_outs)] = 0
         return drops
 
     @staticmethod
