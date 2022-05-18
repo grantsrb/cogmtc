@@ -36,14 +36,14 @@ def train(rank, hyps, verbose=True):
         verbose: bool
             determines if the function should print status updates
     """
+
     # If resuming, hyperparameters are updated appropriately.
     # Actual checkpoint is loaded later.
     _, hyps = get_resume_checkpt(hyps)
-    # Set random seeds
-    hyps['seed'] = try_key(hyps,'seed', int(time.time()))
-    torch.manual_seed(hyps["seed"])
-    np.random.seed(hyps["seed"])
-    torch.use_deterministic_algorithms(True)
+
+    # Set select defaults and seed
+    hyps_default_manipulations(hyps)
+
     # Initialize Data Collector
     # DataCollector's Initializer does Important changes to hyps
     data_collector = DataCollector(hyps)
@@ -426,8 +426,9 @@ class Trainer:
                         print("labels:", labels[row,ii].cpu().numpy())
                         print("actns:", actns[row,ii].cpu().numpy())
                         print()
-                        plt.imshow(o.transpose((1,2,0)).squeeze())
-                        plt.show()
+                        time.sleep(1)
+                        #plt.imshow(o.transpose((1,2,0)).squeeze())
+                        #plt.show()
                 ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
             ###############
 
@@ -818,6 +819,50 @@ def perc_correct(n_aligned, n_targs, **kwargs):
     perc = (n_aligned == n_targs)
     return perc.mean()*100
 
+def hyps_default_manipulations(hyps):
+    """
+    Here we can do some manipulations to ensure select defaults are
+    correct.
+    """
+    # Set random seeds
+    hyps['seed'] = try_key(hyps,'seed', int(time.time()))
+    torch.manual_seed(hyps["seed"])
+    np.random.seed(hyps["seed"])
+    torch.use_deterministic_algorithms(True)
+
+    # Handle Hold Outs
+    if "hold_out" in hyps and "hold_outs" not in hyps:
+        hyps["hold_outs"] = hyps["hold_out"]
+        del hyps["hold_out"]
+        print("changing hyps key 'hold_out' to 'hold_outs'")
+    hyps["hold_outs"] = try_key(hyps, "hold_outs", None)
+    if hyps["hold_outs"] is not None and len(hyps["hold_outs"])==0:
+        hyps["hold_outs"] = None
+
+    # Hold outs are used in the get_drops function as a way
+    # to determine if a word should ever be trained on. 
+    # The hold_lang default to hold_outs if nothing is argued.
+    # Please forgive my blatant typing abuse and abusive overextension
+    # of the use of None
+    assert "hold_words" not in hyps, "You probably meant hold_lang"
+    hyps["hold_lang"] = try_key(hyps, "hold_lang", True)
+    if hyps["hold_lang"] is True or hyps["hold_lang"] is None:
+        hyps["hold_lang"] = hyps["hold_outs"]
+    elif hyps["hold_lang"] is False:
+        hyps["hold_lang"] = None
+    else: hyps["hold_lang"] = set(hyps["hold_lang"])
+
+    # The hold_actns default to hold_outs if nothing is argued.
+    # hold_actns determines what final target counts will be used in game
+    # Please forgive my blatant typing abuse and abusive overextension
+    # of the use of None
+    hyps["hold_actns"] = try_key(hyps, "hold_actns", True)
+    if hyps["hold_actns"] is True or hyps["hold_actns"] is None:
+        hyps["hold_actns"] = hyps["hold_outs"]
+    elif hyps["hold_actns"] is False:
+        hyps["hold_actns"] = None
+    else: hyps["hold_actns"] = set(hyps["hold_actns"])
+
 def hyps_error_catching(hyps):
     """
     Here we can check that the hyperparameter configuration makes sense.
@@ -838,7 +883,4 @@ def hyps_error_catching(hyps):
         )
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
-        
-    if "hold_out" in hyps and "hold_outs" not in hyps:
-        assert False, "change hyps key 'hold_out' to 'hold_outs'"
 

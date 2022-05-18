@@ -286,7 +286,17 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         model during phases other than 0. both low and high are
         inclusive. only applies to gordongames variants.
     "hold_outs": set (or list) of ints
-        the number of targets to hold out during training
+        the targets to hold out during training
+    "hold_lang": set (or list) of ints or bool
+        the language targets to hold out during training. if None or
+        true, defaults to `hold_outs`. if False, no langauge is held out.
+        if a set or list, then the model is not trained on the listed
+        integers
+    "hold_actns": set (or list) of ints or bool
+        the ending game target quantities to hold out during training.
+        if None or true, defaults to value of `hold_outs`. if False, no
+        target quantities are held out. if a set or list, then the model
+        is not trained on the listed integers
 
     "zipf_order": float or None
         if greater than 0, the targets are drawn proportionally to the

@@ -144,17 +144,21 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.inpt_shape = self.hyps["inpt_shape"]
         self.seq_len = self.hyps["seq_len"]
         self.randomize_order = self.hyps["randomize_order"]
-        self.hold_outs = None
-        if try_key(hyps,"hold_outs",None) is not None:
-            if len(hyps["hold_outs"])>0:
-                self.hold_outs = torch.LongTensor(
-                    list(hyps["hold_outs"])
-                )
+
+        # Hold outs are used in the get_drops function as a way
+        # to determine if a word should ever be trained on. 
+        # The hold_lang default to hold_outs if nothing is argued.
+        # The setting of hold_lang is handled in the
+        # `hyps_error_catching` fxn in `training.py`
+        self.hold_lang = hyps["hold_lang"]
+        if hyps["hold_lang"] is not None:
+            self.hold_lang = torch.LongTensor(list(hyps["hold_lang"]))
+        print("Hold lang:", self.hold_lang)
+
         self.roll_data = try_key(self.hyps, "roll_data", True)
         self.share_tensors = share_tensors
         assert self.exp_len > self.seq_len,\
             "sequence length must be less than total experience length"
-        
         self.shared_exp = {
             "obs": torch.zeros((
                     self.batch_size,
@@ -247,9 +251,10 @@ class ExperienceReplay(torch.utils.data.Dataset):
         data["drops"] = self.get_drops(
             self.hyps,
             data["grabs"],
-            data["is_animating"],
-            self.hold_outs
+            data["is_animating"]
         )
+        if self.hold_lang is not None:
+            data["drops"][torch.isin(data["n_items"],self.hold_lang)] = 0
         return data
 
     def __iter__(self):
@@ -286,7 +291,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
             raise StopIteration
 
     @staticmethod
-    def get_drops(hyps, grabs, is_animating, hold_outs=None):
+    def get_drops(hyps, grabs, is_animating):
         """
         Returns a tensor denoting steps in which the agent dropped an
         item. This always means that the player is still on the item
@@ -321,9 +326,6 @@ class ExperienceReplay(torch.utils.data.Dataset):
             is_animating: torch LongTensor (..., N)
                 0s denote the environment was not displaying the targets
                 anymore. 1s denote the targets were displayed
-            hold_outs: torch Long Tensor (D,)
-                a tensor of values that should be held out from the
-                language training
         Returns:
             drops: Long Tensor (B,N)
                 a tensor denoting if the agent dropped an item with a 1,
@@ -334,7 +336,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
         if try_key(hyps, "langall", False):
             drops = torch.ones_like(grabs)
         elif try_key(hyps, "lang_targs_only", 0) == 1:
-            return is_animating.clone()
+            drops = is_animating.clone()
         else:
             block = len(grabs)//len(hyps["env_types"])
             drops = torch.zeros_like(grabs).long()
@@ -346,8 +348,6 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     grabs[i*block:(i+1)*block],
                     is_animating[i*block:(i+1)*block]
                 )
-        if hold_outs is not None:
-            drops[torch.isin(drops,hold_outs)] = 0
         return drops
 
     @staticmethod
@@ -633,6 +633,8 @@ class Runner:
                     "hold_outs": set of ints
                         a set of target values that should not be
                         included in the training data
+                    "hold_actns": bool
+                        if false, hold_outs is set to None
             shared_exp: dict
                 keys: str
                 vals: shared torch tensors
@@ -666,8 +668,8 @@ class Runner:
                 Used to indicate the end of the training from the main
                 process.
         """
-
-        self.hyps = hyps
+        self.hyps = {**hyps}
+        self.hyps["hold_outs"] = self.hyps["hold_actns"]
         self.shared_exp = shared_exp
         self.idx = idx
         self.gate_q = gate_q
@@ -955,6 +957,8 @@ class ValidationRunner(Runner):
         self.hyps["targ_range"] = self.hyps["val_targ_range"]
         self.hyps["actn_range"] = self.hyps["val_targ_range"]
         self.hyps["lang_range"] = self.hyps["val_targ_range"]
+        self.hyps["hold_lang"] = None
+        self.hyps["hold_actns"] = None
         self.hyps["hold_outs"] = set()
         print("Validation runner target range:",self.hyps["targ_range"])
         self.phase = phase
@@ -1040,6 +1044,7 @@ class ValidationRunner(Runner):
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
+                print("Validating",env_type, "| NTargs:", n_targs)
                 data = self.collect_data(model, env_type, n_targs)
                 lang_labels = get_lang_labels(
                     data["n_items"],
