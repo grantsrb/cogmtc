@@ -62,7 +62,12 @@ def train(rank, hyps, verbose=True):
     data_collector.update_phase(try_key(hyps, "first_phase", 0))
     data_collector.dispatch_runners()
     # Record experiment settings
-    recorder = Recorder(hyps, model)
+    try:
+        recorder = Recorder(hyps, model)
+    except:
+        for k in sorted(hyps):
+            print(k, hyps[k])
+        assert False
     data_collector.validator.hyps["save_folder"] = hyps["save_folder"]
     data_collector.init_validator_proc(shared_model)
     # initialize trainer

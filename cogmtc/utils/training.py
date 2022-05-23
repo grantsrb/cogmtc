@@ -219,6 +219,7 @@ def record_session(hyps, model):
     for k in keys:
         if type(hyps[k]) == type(np.array([])):
             del temp_hyps[k]
+        elif type(hyps[k]) == type(set()): temp_hyps[k] = list(hyps[k])
     utils.save_json(temp_hyps, os.path.join(sf,h+".json"))
 
 def prep_search_keys(s):
