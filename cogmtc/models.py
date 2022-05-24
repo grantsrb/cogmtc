@@ -191,7 +191,8 @@ class Model(CoreModule):
                 if you want to use an additional lstm to output the
                 language for numeral systems, set this to true. if false
                 and using a numeral system, a single dense net makes
-                all numeral predictions at the same time.
+                all numeral predictions at the same time. Does not
+                affect anything if not using numeral system
         """
         super().__init__()
         self.inpt_shape = inpt_shape
