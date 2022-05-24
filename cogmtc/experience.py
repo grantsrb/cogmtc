@@ -482,6 +482,7 @@ class DataCollector:
         elif int(self.hyps["use_count_words"]) == DUPLICATES:
             self.hyps["lang_size"] = self.hyps["lang_size"]*2
         if int(self.hyps["use_count_words"]) == NUMERAL:
+            self.hyps["numeral_base"]=try_key(self.hyps,"numeral_base",4)
             base = self.hyps["numeral_base"]
             # Add 1 to base for the STOP token
             self.hyps["lang_size"] = base+1
