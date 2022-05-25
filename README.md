@@ -285,18 +285,26 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the range of potential target counts for training the action
         model during phases other than 0. both low and high are
         inclusive. only applies to gordongames variants.
+
     "hold_outs": set (or list) of ints
-        the targets to hold out during training
+        the targets/item counts to hold out during training. influences
+        `hold_lang` and `hold_actns` depending on their respective
+        values. See the documentation below for more detail
     "hold_lang": set (or list) of ints or bool
-        the language targets to hold out during training. if None or
-        true, defaults to `hold_outs`. if False, no langauge is held out.
-        if a set or list, then the model is not trained on the listed
-        integers
+        the language targets to hold out during training. if true,
+        defaults to `hold_outs`. if None or False, no langauge is held
+        out. if a set or list, then the contained integers represent
+        the `n_items` values that are held out from the language training
     "hold_actns": set (or list) of ints or bool
         the ending game target quantities to hold out during training.
-        if None or true, defaults to value of `hold_outs`. if False, no
-        target quantities are held out. if a set or list, then the model
-        is not trained on the listed integers
+        if true, defaults to value of `hold_outs`. if False or None, no
+        target quantities are held out. if a set or list, then the game
+        never has an ending target quantity of the listed integers.
+        Important to note that the held target quantities are still
+        contained within episodes with target quantities greater than
+        the held target quantity. i.e. holding a target quanity of 6
+        will not hold the necessary 6 value from training on target
+        quantities of 7 or greater.
 
     "zipf_order": float or None
         if greater than 0, the targets are drawn proportionally to the

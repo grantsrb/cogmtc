@@ -851,9 +851,9 @@ def hyps_default_manipulations(hyps):
     # of the use of None
     assert "hold_words" not in hyps, "You probably meant hold_lang"
     hyps["hold_lang"] = try_key(hyps, "hold_lang", True)
-    if hyps["hold_lang"] is True or hyps["hold_lang"] is None:
+    if hyps["hold_lang"] is True:
         hyps["hold_lang"] = hyps["hold_outs"]
-    elif hyps["hold_lang"] is False:
+    elif hyps["hold_lang"] is False or hyps["hold_lang"] is None:
         hyps["hold_lang"] = None
     else: hyps["hold_lang"] = set(hyps["hold_lang"])
 
@@ -862,9 +862,9 @@ def hyps_default_manipulations(hyps):
     # Please forgive my blatant typing abuse and abusive overextension
     # of the use of None
     hyps["hold_actns"] = try_key(hyps, "hold_actns", True)
-    if hyps["hold_actns"] is True or hyps["hold_actns"] is None:
+    if hyps["hold_actns"] is True:
         hyps["hold_actns"] = hyps["hold_outs"]
-    elif hyps["hold_actns"] is False:
+    elif hyps["hold_actns"] is False or hyps["hold_actns"] is None:
         hyps["hold_actns"] = None
     else: hyps["hold_actns"] = set(hyps["hold_actns"])
 
