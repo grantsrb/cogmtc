@@ -527,7 +527,7 @@ def get_loss_and_accs(phase,
     n_items = n_items.reshape(-1)
     # Phase 0: language labels when agent drops an item
     # Phase 1: action labels at all steps in rollout
-    # Phase 2: lang and action labels at all steps in rollout
+    # Phase 2: combine phases 0 and 1
     loss = 0
     lang_accs = {}
     losses = {}
@@ -535,7 +535,7 @@ def get_loss_and_accs(phase,
         loss, losses, lang_accs = calc_lang_loss_and_accs(
             lang_preds,
             lang_targs,
-            drops,
+            drops, # determines what timesteps to train language
             categories=n_items,
             prepender=prepender,
             base=base,
