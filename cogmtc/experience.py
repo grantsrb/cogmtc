@@ -9,7 +9,7 @@ from cogmtc.models import NullModel
 from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers
-from collections import deque
+from collections import deque, defaultdict
 import matplotlib.pyplot as plt
 import math
 
@@ -254,7 +254,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
             data["is_animating"]
         )
         if self.hold_lang is not None:
-            data["drops"][torch.isin(data["n_items"],self.hold_lang)] = 0
+          data["drops"][torch.isin(data["n_items"],self.hold_lang)] = 0
         return data
 
     def __iter__(self):
@@ -1045,7 +1045,6 @@ class ValidationRunner(Runner):
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
-                print("Validating",env_type, "| NTargs:", n_targs)
                 data = self.collect_data(model, env_type, n_targs)
                 lang_labels = get_lang_labels(
                     data["n_items"],
@@ -1062,6 +1061,7 @@ class ValidationRunner(Runner):
                 data["lang_targs"] = lang_labels
                 data["drops"] = drops
 
+                print("\nValidated",env_type, "| NTargs:", n_targs)
                 # Save epoch results
                 self.save_epoch_data(
                     data,
@@ -1255,6 +1255,13 @@ class ValidationRunner(Runner):
                 base=base,
                 max_char_seq=max_char_seq
             )
+            s = ""
+            for k in accs:
+                if "actn_acc_avg" in k:
+                    s += int(len(s)>0)*" | " + "Actn Acc:" + str(accs[k])
+                elif "lang_acc_avg" in k:
+                    s += int(len(s)>0)*" | " + "Lang Acc:" + str(accs[k])
+            print(s)
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}
         inpts = {**losses, **accs}
