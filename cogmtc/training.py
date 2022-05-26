@@ -78,7 +78,7 @@ def train(rank, hyps, verbose=True):
     skip_first_phase = try_key(hyps,"skip_first_phase",False)
     hyps_error_catching(hyps)
     if not skip_first_phase and trainer.phase == first_phase:
-        s = "\n\nBeginning First Phase " + str(trainer.phase)
+        s = "\n\nBeginning First Phase: " + str(trainer.phase)
         recorder.write_to_log(s)
         print(s)
         # Loop training
@@ -106,7 +106,7 @@ def train(rank, hyps, verbose=True):
     )
     n_epochs = hyps["actn_epochs"] if first_phase==0 else\
                hyps["lang_epochs"]
-    s = "\n\nBeginning Second Phase " + str(trainer.phase)
+    s = "\n\nBeginning Second Phase: " + str(trainer.phase)
     recorder.write_to_log(s)
     print(s)
     training_loop(
@@ -392,7 +392,7 @@ class Trainer:
 
             # Testing
             #############
-            if self.hyps["exp_name"]=="test" and\
+            if epoch > 0 and self.hyps["exp_name"]=="test" and\
                             try_key(self.hyps,"static_render",False):
                 grabs = data["grabs"]
                 #print("train grabs:")
@@ -431,16 +431,15 @@ class Trainer:
                         print("labels:", labels[row,ii].cpu().numpy())
                         print("actns:", actns[row,ii].cpu().numpy())
                         print()
-                        time.sleep(1)
-                        #plt.imshow(o.transpose((1,2,0)).squeeze())
-                        #plt.show()
+                        #time.sleep(1)
+                        plt.imshow(o.transpose((1,2,0)).squeeze())
+                        plt.show()
                 ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
             ###############
 
             # Resets to h value to appropriate step of last loop
             self.reset_model(model, len(obs))
-            # model uses dones if it is recurrent
-            if drops.sum() == 0:
+            if drops.sum() == 0 and self.phase != 1:
                 print("No drops in loop", i, "... continuing")
                 with torch.no_grad():
                     logits, langs = model(
@@ -448,6 +447,7 @@ class Trainer:
                         dones.to(DEVICE)
                     )
                 continue
+            # model uses dones if it is recurrent
             logits, langs = model(
                 obs.to(DEVICE),
                 dones.to(DEVICE)
@@ -850,6 +850,7 @@ def hyps_default_manipulations(hyps):
     # Please forgive my blatant typing abuse and abusive overextension
     # of the use of None
     assert "hold_words" not in hyps, "You probably meant hold_lang"
+    assert "hold_langs" not in hyps, "You probably meant hold_lang"
     hyps["hold_lang"] = try_key(hyps, "hold_lang", True)
     if hyps["hold_lang"] is True:
         hyps["hold_lang"] = hyps["hold_outs"]
