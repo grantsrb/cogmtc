@@ -1257,11 +1257,11 @@ class ValidationRunner(Runner):
             )
             s = ""
             for k in accs:
-                if "actn_acc_avg" in k:
+                if "_actn_acc" == k:
                     s += int(len(s)>0)*" | " + "Actn Acc:" + str(accs[k])
-                elif "lang_acc_avg" in k:
+                elif "_lang_acc" == k:
                     s += int(len(s)>0)*" | " + "Lang Acc:" + str(accs[k])
-            print(s)
+            print(s + "\n")
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}
         inpts = {**losses, **accs}
