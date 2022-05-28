@@ -243,12 +243,15 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if 0 no effect. Otherwise the drops array will randomly add
         ones so that the language training signal is increased.
     "count_targs": bool
+        LARGELY DEPRECATED!!! automatically set to false when
+        `use_count_words` is 0, otherwise set to true.
+
         Only applies to v4, v7, and v8 variants of gordongames. if true,
         the model will learn to count out the targets in addition to
         the items. If false, model will only count the items. Differs
         from langall=True in that it skips the steps that
         the agent takes to move about the grid. Overridden by
-        `lang_targs_only`
+        `lang_targs_only`. Forced to be False
     "lang_targs_only": int
         Only applies to v4, v7, and v8 variants of gordongames. if 0,
         effectively does nothing. If 1, the language labels will only

@@ -392,7 +392,7 @@ class Trainer:
 
             # Testing
             #############
-            if epoch > 0 and self.hyps["exp_name"]=="test" and\
+            if epoch > -1 and self.hyps["exp_name"]=="test" and\
                             try_key(self.hyps,"static_render",False):
                 grabs = data["grabs"]
                 #print("train grabs:")
@@ -430,6 +430,7 @@ class Trainer:
                         print("drops:", drops[row,ii].cpu().numpy())
                         print("labels:", labels[row,ii].cpu().numpy())
                         print("actns:", actns[row,ii].cpu().numpy())
+                        print("isanim:", data["is_animating"][row,ii].cpu().numpy())
                         print()
                         #time.sleep(1)
                         plt.imshow(o.transpose((1,2,0)).squeeze())
@@ -880,7 +881,14 @@ def hyps_error_catching(hyps):
     if try_key(hyps, "lang_targs_only", False) and\
             try_key(hyps,"langall",False):
         print("Potential conflict between lang_targs_only and langall")
-        print("langall takes precedence. language will occur at all steps")
+        print("langall takes precedence. lang will occur at all steps")
+    # Defaults here avoid errors in the future
+    if hyps["use_count_words"] == 0:
+        hyps["count_targs"] = False
+        print("Setting count_targs to false for inequality labels")
+    else:
+        hyps["count_targs"] = True
+        print("Setting count_targs to true")
     hyps["n_envs"] = len(hyps["env_types"])
     if hyps["batch_size"] % hyps["n_envs"] != 0:
         print(
