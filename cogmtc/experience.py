@@ -198,11 +198,15 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 self.shared_exp[key].share_memory_()
         self.harvest_exp()
 
-    def harvest_exp(self):
+    def harvest_exp(self, phase=None):
         """
         Copys the shared tensors so that the runners can continue
         collecting without changing the data.
 
+        Args:
+            phase: int or None
+                the phase of the training. only necessary if blind_lang
+                is true
         Returns:
             exp: dict of tensors
                 deep copies the shared experience
@@ -210,6 +214,18 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.exp = {
           k: v.detach().data.clone() for k,v in self.shared_exp.items()
         }
+        if self.hyps["blind_lang"] and phase == 0:
+            count_list = torch.arange(self.hyps["lang_range"][1])
+            l = self.exp["n_items"].shape[-1]
+            n = l//len(count_list)+1
+            b = len(self.exp["n_items"])
+            count_list = count_list[None].repeat((b,n))
+            self.exp["n_items"][:] = count_list[:,:l]
+            #zeros = torch.zeros_like(count_list)
+            #for i in range(b):
+            #    if i > 0: self.exp["n_items"][i,:i] = zeros[:i]
+            #    self.exp["n_items"][i,i:] = count_list[:l-i]
+
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
             self.exp["n_targs"],
@@ -445,6 +461,7 @@ class DataCollector:
         self.stop_q = mp.Queue(self.n_envs)
         self.val_gate_q = mp.Queue(1)
         self.val_stop_q = mp.Queue(1)
+        # Used to update training phase information accross procs
         self.phase_q = mp.Queue(1)
         self.phase_q.put(try_key(hyps, "first_phase", 0))
         self.terminate_q = mp.Queue(1)
@@ -466,12 +483,14 @@ class DataCollector:
         if self.hyps["continuous_env"]: self.hyps["loss_fxn"]="mse_loss"
         else: self.hyps["loss_fxn"] = "cross_entropy"
         self.validator.loss_fxn = getattr(F, self.hyps["loss_fxn"])
-        lang_range = try_key(
+        self.hyps["lang_range"] = try_key(
             self.hyps,
             "lang_range",
             self.hyps["targ_range"]
         )
-        if lang_range is None: lang_range = self.hyps["targ_range"]
+        if self.hyps["lang_range"] is None:
+            self.hyps["lang_range"] = self.hyps["targ_range"]
+        lang_range = self.hyps["lang_range"]
         self.hyps["lang_size"] = lang_range[1]+1 # plus one includes zero
         self.hyps["max_char_seq"] = 1
         # If comparison or piraha language, must change lang_size

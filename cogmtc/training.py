@@ -203,7 +203,9 @@ def training_loop(n_epochs,
         # Run environments, automatically fills experience replay's
         # shared_exp tensors
         data_collector.await_runners()
-        data_collector.exp_replay.harvest_exp() # Copies the shared exp
+        # Copies the shared exp so that runners can collect
+        # during training
+        data_collector.exp_replay.harvest_exp(trainer.phase)
         data_collector.dispatch_runners()
         trainer.train(model, data_collector.exp_replay, epoch)
 
@@ -389,6 +391,11 @@ class Trainer:
 
             if self.phase == 0 and try_key(self.hyps,"blind_lang",False):
                 obs = torch.zeros_like(obs)
+                dones = torch.zeros_like(dones)
+                reps = self.hyps["lang_range"][1]*2
+                if i % reps == reps-1:
+                    dones[:,0] = 1
+
 
             # Testing
             #############
@@ -874,10 +881,15 @@ def hyps_error_catching(hyps):
     """
     Here we can check that the hyperparameter configuration makes sense.
     """
+    if try_key(hyps,"blind_lang",False):
+        print("Setting langall to true for blind lang")
+        hyps["langall"] = True
+        if try_key(hyps,"drop_perc_threshold",0)!=0:
+            print("changing drop_perc_threshold to 0")
+            hyps["drop_perc_threshold"] = 0
+        
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]
-    if try_key(hyps,"blind_lang",False):
-        assert try_key(hyps,"drop_perc_threshold",0)==0
     if try_key(hyps, "lang_targs_only", False) and\
             try_key(hyps,"langall",False):
         print("Potential conflict between lang_targs_only and langall")
