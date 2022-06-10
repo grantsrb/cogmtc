@@ -1305,7 +1305,9 @@ class ValidationRunner(Runner):
                            env_type,
                            n_targs=None,
                            incl_hs=False,
-                           to_cpu=False):
+                           to_cpu=False,
+                           n_eps=None,
+                           render=False):
         """
         Performs the actual rollouts using the model
 
@@ -1319,6 +1321,12 @@ class ValidationRunner(Runner):
             to_cpu: bool
                 if true, the langpreds and actnpreds are placed on
                 the cpu
+            n_eps: int or None
+                the number of episodes to collect
+                if None, defaults to hyps['n_eval_eps']
+            render: bool
+                if true, renders the play. can also be specified
+                through hyps.
         Returns:
             data: dict
                 keys: str
@@ -1377,8 +1385,9 @@ class ValidationRunner(Runner):
         model.reset(1)
         if incl_hs: self.record_hs(model=model,data=data)
         ep_count = 0
-        n_eps = try_key(self.hyps,"n_eval_eps",10)
-        if self.hyps["exp_name"]=="test": n_eps = 1
+        if n_eps is None:
+            n_eps = try_key(self.hyps,"n_eval_eps",10)
+            if self.hyps["exp_name"]=="test": n_eps = 1
         # Get the conditional vector
         with torch.no_grad():
             for i,env_type in enumerate(self.env_types):
@@ -1427,7 +1436,7 @@ class ValidationRunner(Runner):
                     "disp_targs","is_animating"]
             for k in keys: data[k].append(info[k])
 
-            if self.hyps["render"]:
+            if render or self.hyps["render"]:
                 self.env.render()
                 print("Use count words:", self.hyps["use_count_words"],
                     "-- Lang size:", model.lang_size,
