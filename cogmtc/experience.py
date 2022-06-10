@@ -466,13 +466,17 @@ class DataCollector:
         self.phase_q.put(try_key(hyps, "first_phase", 0))
         self.terminate_q = mp.Queue(1)
         self.terminate_q.put(0)
+        # Used to communicate results of validation training to
+        # main proc
+        self.val_q = mp.Queue(1)
         # Get observation, actn, and lang shapes
         self.validator = ValidationRunner(
             self.hyps,
             gate_q=self.val_gate_q,
             stop_q=self.val_stop_q,
             phase_q=self.phase_q,
-            terminate_q=self.terminate_q
+            terminate_q=self.terminate_q,
+            val_q=self.val_q
         )
         print("val runner created")
         self.validator.create_new_env()
@@ -939,7 +943,8 @@ class ValidationRunner(Runner):
                        stop_q=None,
                        phase_q=None,
                        terminate_q=None,
-                       phase=0):
+                       phase=0,
+                       val_q=None):
         """
         Args:
             hyps: dict
@@ -964,6 +969,9 @@ class ValidationRunner(Runner):
                 has changed.
             phase: int
                 the initial phase
+            val_q: multiprocessing Queue.
+                Used to indicate to the main process the total accuracy
+                acheived by the latest validation.
         """
         self.hyps = {**hyps}
         self.seed = self.hyps["seed"]
@@ -971,6 +979,7 @@ class ValidationRunner(Runner):
         self.stop_q = stop_q
         self.phase_q = phase_q
         self.terminate_q = terminate_q
+        self.val_q = val_q
         # Default to targ_range if no val_targ_range is specified
         if try_key(self.hyps, "val_targ_range", None) is None:
             self.hyps["val_targ_range"] = self.hyps["targ_range"]
@@ -1065,6 +1074,9 @@ class ValidationRunner(Runner):
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
                 data = self.collect_data(model, env_type, n_targs)
+                idx = data["dones"]==1
+                acc = (data["n_items"][idx] == n_targs).float().mean()
+                avg_acc += acc.item()
                 lang_labels = get_lang_labels(
                     data["n_items"],
                     data["n_targs"],
@@ -1113,6 +1125,12 @@ class ValidationRunner(Runner):
                   data, lang_labels, drops, epoch, self.phase, env_type
                 )
                 self.save_actn_data(data, epoch, self.phase, env_type)
+        avg_acc = avg_acc/(len(rainj)*len(self.env_types))
+        print("Total Val Acc:", avg_acc)
+        if self.val_q is not None:
+            if not self.val_q.empty():
+                _ = self.val_q.get()
+            self.val_q.put(avg_acc)
 
     def save_lang_data(self,
                        data,

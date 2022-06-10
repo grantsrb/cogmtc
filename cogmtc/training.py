@@ -218,9 +218,10 @@ def training_loop(n_epochs,
                     for k,v in model.data_strings.items():
                         print("v:", v)
             data_collector.await_validator()
+            avg_acc = data_collector.val_q.get()
+            trainer.save_best_model(shared_model, avg_acc, epoch-1)
         shared_model.load_state_dict(model.state_dict())
-        if verbose:
-            print("\nDispatching validator")
+        if verbose: print("\nDispatching validator")
         data_collector.dispatch_validator(epoch)
 
         # Clean up the epoch
@@ -608,6 +609,22 @@ class Trainer:
                     n_aligned=aligned,
                 )
         return metrics
+
+    def save_best_model(self, model, score, epoch):
+        """
+        If accuracy is best yet saves the model as the best model.
+        Only use for phases 1 and 2 
+
+        Args:
+            model: torch Module
+            score: float
+                validation accuracy or some other score where greater
+                is better.
+            epoch: int
+                the epoch associated with the model
+        """
+        if self.phase == 0: return # the score is generally the actn acc
+        self.recorder.save_best_model(model, score, epoch, self.phase)
 
     def end_epoch(self, epoch, n_epochs, model):
         """

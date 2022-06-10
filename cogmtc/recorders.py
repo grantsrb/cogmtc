@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import pandas as pd
 
-from cogmtc.utils.save_io import save_checkpt
+from cogmtc.utils.save_io import save_checkpt, save_best_checkpt
 from cogmtc.utils.utils import try_key
 from cogmtc.utils.training import get_exp_num, record_session, get_save_folder
 
@@ -32,8 +32,6 @@ class Recorder:
         self.df = None # Used to store a dataframe with the fxn to_df
         self.reset_stats()
         self.best_score = -np.inf
-        if "loss" in hyps['best_by_key']:
-            self.best_score = np.inf
         # Initialize important variables
         hyps['save_root'] = try_key(hyps, 'save_root', "./")
         hyps["main_path"] = os.path.join(
@@ -101,6 +99,33 @@ class Recorder:
                 stats[key + "_min"] = np.min(self.metrics[key])
         return stats
 
+    def save_best_model(self, model, score, epoch, phase):
+        """
+        Saves a checkpoint file for the argued model if the argued
+        score is the best yet. Only use for phases 1 and 2.
+
+        Args:
+            model: torch Module
+            score: float
+                validation accuracy or some other score where greater
+                is better.
+            epoch: int
+            phase: int [0,1,2]
+                the phase of the training (is it (0) training the
+                language network or (1) training the action network or
+                (2) both together)
+        """
+        if score < self.best_score: return
+        save_dict = {
+            "epoch": epoch,
+            "phase": phase,
+            "hyps": self.hyps,
+            "state_dict": model.state_dict(),
+            "optim_dict": None,
+            "current_lr": None,
+        }
+        save_best_checkpt(save_dict, self.hyps["save_folder"])
+
     def save_epoch_stats(self, phase, epoch, model, optim, verbose=True):
         """
         Saves a checkpoint file to the model folder. The checkpoint
@@ -133,19 +158,14 @@ class Recorder:
             "current_lr": optim.param_groups[0]["lr"],
         }
         save_dict["stats"]["phase"] = phase
-        key = self.hyps["best_by_key"]
-        if key not in save_dict["stats"]: key = "train_loss_avg"
-        if "loss" in key:
-            is_best = save_dict["stats"][key] < self.best_score
-        else:
-            is_best = save_dict["stats"][key] > self.best_score
+
         save_checkpt(
             save_dict,
             save_name,
             epoch,
             ext=".pt",
             del_prev_sd=self.hyps['del_prev_sd'],
-            best=is_best
+            best=False
         )
         string = self.make_log_string(save_dict["stats"])
         s = "\nEpoch: "+str(epoch) + " - Phase: " + str(phase)
