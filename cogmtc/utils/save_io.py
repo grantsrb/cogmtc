@@ -308,10 +308,17 @@ def load_model(path, models=None, load_sd=True, use_best=False,
         except:
             print("Failed to load state dict, attempting manual load")
             sd = data["state_dict"]
-            keys = {*sd.keys(), *model.state_dict().keys()}
-            for k in keys:
-                if k not in sd: sd[k] = getattr(model, k)
-                if k not in model: setattr(model, k, sd[k])
+            modules = []
+            for modu in model.actn_dense:
+                if not isinstance(modu, torch.nn.LayerNorm):
+                    modules.append(modu)
+            model.actn_dense = torch.nn.Sequential( *modules )
+            print("Succeeded!")
+            #sd = data["state_dict"]
+            #keys = {*sd.keys(), *model.state_dict().keys()}
+            #for k in keys:
+            #    if k not in sd: sd[k] = getattr(model, k)
+            #    if k not in model: setattr(model, k, sd[k])
     else:
         print("state dict not loaded!")
     return model
