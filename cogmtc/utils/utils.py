@@ -442,6 +442,9 @@ def convert_numeral_array_to_numbers(numerals, base):
             final non-negative character is ignored, all trailing
             negative charaters are ignored.
         base: int
+    Returns:
+        nums: torch float tensor (..., )
+            the converted numbers
     """
     numerals = numerals.clone()
     numerals[numerals<0] = 0
@@ -639,6 +642,7 @@ def calc_lang_loss_and_accs(preds,
     accs_array = []
     losses_array = []
     labels = labels.reshape(-1)
+    # Used for numeral labels
     if drops.shape[0]!=labels.shape[0]:
         n = labels.shape[0]//drops.shape[0]
         drops = drops.repeat_interleave(n)
