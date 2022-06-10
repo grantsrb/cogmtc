@@ -149,12 +149,16 @@ def foldersort(x):
 
     x: str
     """
-    splt = x.split("/")[-1].split("_")
+    if x[-1] == "/": x = x[:-1]
+    splt = x.split("/")
+    if len(splt) > 1: splt = splt[-1].split("_")
+    else: splt = splt[0].split("_")
     for i,s in enumerate(splt[1:]):
         try:
             return int(s)
         except:
             pass
+    print("Folder sort splt:", x)
     assert False
 
 def is_model_folder(path, exp_name=None):
@@ -201,16 +205,19 @@ def get_model_folders(main_folder, incl_full_path=False):
     """
     folders = []
     main_folder = os.path.expanduser(main_folder)
-    exp_name = main_folder.split("/")
-    exp_name = exp_name[-1] if len(exp_name[-1])>0 else exp_name[-2]
+    if ".pt" in main_folder[-4:]:
+        # if model file, return the corresponding folder
+        return [ "/".join(main_folder.split("/")[:-1]) ]
     for d, sub_ds, files in os.walk(main_folder):
         for sub_d in sub_ds:
             check_folder = os.path.join(d,sub_d)
-            if is_model_folder(check_folder,exp_name=exp_name):
+            if is_model_folder(check_folder):
                 if incl_full_path:
                     folders.append(check_folder)
                 else:
                     folders.append(sub_d)
+    if is_model_folder(main_folder): folders.append(main_folder)
+    folders = list(set(folders))
     return sorted(folders, key=foldersort)
 
 def load_checkpoint(path, use_best=False, phase=None):
