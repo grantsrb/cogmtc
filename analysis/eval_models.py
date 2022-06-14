@@ -3,6 +3,13 @@ Use this script to collect rollouts from the final models in each of
 the argued folders
 
  $ python3 eval_models.py path/to/folder/ path/to/model
+
+optionally can argue a csv file to save to. Simply add a valid path
+with .csv as the extension. Also can argue "best" or "bests" to use
+the model's best checkpoint files.
+ 
+ $ python3 eval_models.py bests valid_path.csv path/to/folder/ path/to/model
+
 """
 
 
@@ -31,8 +38,11 @@ import time
 folder_args = sys.argv[1:]
 main_csv = "model_eval.csv"
 model_folders = []
+use_best = False
 for folder in folder_args:
-    if ".csv" in folder:
+    if folder == "best" or folder == "bests":
+        use_best = True
+    elif ".csv" in folder:
         main_csv = folder
     else:
         folders = io.get_model_folders(folder, incl_full_path=True)
@@ -109,7 +119,7 @@ for i,folder in enumerate(model_folders):
 
     hyps["val_targ_range"] = [1,12]
     val_runner = cogmtc.experience.ValidationRunner(hyps, phase=2)
-    model = io.load_model( folder, use_best=False )
+    model = io.load_model( folder, use_best=use_best )
     model.cuda()
     model.eval()
     model.reset(1)
