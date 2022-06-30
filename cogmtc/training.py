@@ -912,12 +912,14 @@ def hyps_error_catching(hyps):
         print("Potential conflict between lang_targs_only and langall")
         print("langall takes precedence. lang will occur at all steps")
     # Defaults here avoid errors in the future
-    if hyps["use_count_words"] == 0:
-        hyps["count_targs"] = False
-        print("Setting count_targs to false for inequality labels")
-    else:
-        hyps["count_targs"] = True
-        print("Setting count_targs to true")
+    hyps["count_targs"] = True
+    print("Setting count_targs to true")
+    #if hyps["use_count_words"] == 0:
+    #    hyps["count_targs"] = False
+    #    print("Setting count_targs to false for inequality labels")
+    #else:
+    #    hyps["count_targs"] = True
+    #    print("Setting count_targs to true")
     hyps["n_envs"] = len(hyps["env_types"])
     if hyps["batch_size"] % hyps["n_envs"] != 0:
         print(
