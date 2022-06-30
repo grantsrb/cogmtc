@@ -397,6 +397,10 @@ class ExperienceReplay(torch.utils.data.Dataset):
         drops = grabs.clone().long()
         if hyps["env_type"] in {"gordongames-v4", "gordongames-v8"}:
             drops[drops>0] = 1
+            twos = torch.zeros((drops.shape[0],drops.shape[1]+1))
+            if drops.is_cuda: twos = twos.cuda()
+            twos[1:] = drops
+            drops[(drops+twos[:-1])==2] = 1
             if try_key(hyps, "count_targs", True):
                 drops = drops | (is_animating>0)
             return drops
