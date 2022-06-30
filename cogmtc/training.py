@@ -440,9 +440,9 @@ class Trainer:
                         print("actns:", actns[row,ii].cpu().numpy())
                         print("isanim:", data["is_animating"][row,ii].cpu().numpy())
                         print()
-                        #time.sleep(1)
-                        plt.imshow(o.transpose((1,2,0)).squeeze())
-                        plt.show()
+                        time.sleep(1)
+                        #plt.imshow(o.transpose((1,2,0)).squeeze())
+                        #plt.show()
                 ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
             ###############
 
