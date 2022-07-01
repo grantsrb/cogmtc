@@ -429,6 +429,60 @@ def change_base(n, base):
         rem = new_rem
     return int(chars)
 
+def pre_step_up(arr):
+    """
+    A function to determine what indices are less than their
+    successive index. Returns a binary array.
+
+    Args:
+        arr: torch Tensor (..., N)
+    Returns:
+        pre_idxs: torch LongTensor (..., N)
+    """
+    diffs = arr[...,1:]-arr[...,:-1]
+    diffs[diffs>0] = 1
+    diffs[diffs!=1] = 0
+    pre_idxs = torch.zeros_like(arr)
+    pre_idxs[...,:-1] = diffs
+    return pre_idxs
+
+def post_step_up(arr):
+    """
+    A function to determine what indices are greater than their
+    preceding index. Returns a binary array.
+
+    Args:
+        arr: torch Tensor (..., N)
+    Returns:
+        post_idxs: torch LongTensor (..., N)
+    """
+    diffs = arr[...,1:]-arr[...,:-1]
+    diffs[diffs>0] = 1
+    diffs[diffs!=1] = 0
+    post_idxs = torch.zeros_like(arr)
+    post_idxs[...,1:] = diffs
+    return post_idxs
+
+def describe_then_prescribe(arr, no_shifts):
+    """
+    Sets up a copy of arr that shifts all values within arr
+    back one index at indices in which no_shifts is 0.
+
+    Args:
+        arr: torch LongTensor (..., N)
+        no_shifts: torch LongTensor (..., N)
+            indices that should not be shifted back a step
+    Returns:
+        prescribe: torch LongTensor
+            a copy of arr that has shifted some of the values
+    """
+    prescribe = torch.empty_like(arr)
+    prescribe[...,:-1] = arr[...,1:]
+    prescribe[...,-1:] = arr[...,-1:]
+    idx = (no_shifts==1)
+    prescribe[idx] = arr[idx]
+    return prescribe
+
 def convert_numeral_array_to_numbers(numerals, base):
     """
     converts a numeral array (representing a single number in any base)

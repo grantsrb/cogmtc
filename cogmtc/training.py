@@ -429,7 +429,7 @@ class Trainer:
                 #plt.imshow(o)
                 #plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
                 ##plt.show()
-                for row in range(min(len(obs),4)):
+                for row in range(min(len(obs),5)):
                     print("row:",row)
                     for ii,o in enumerate(obs[row].detach().cpu().numpy()):
                         print("seq:", ii)

@@ -8,7 +8,7 @@ import numpy as np
 from cogmtc.models import NullModel
 from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
-from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers
+from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
 import math
@@ -233,6 +233,11 @@ class ExperienceReplay(torch.utils.data.Dataset):
             use_count_words=self.hyps["use_count_words"],
             max_char_seq=self.hyps["max_char_seq"]
         )
+        if try_key(self.hyps, "pre_grab_count", False) == True:
+            self.exp["lang_labels"] = describe_then_prescribe(
+                self.exp["lang_labels"],
+                self.exp["is_animating"]|self.exp["dones"]
+            )
         return self.exp
 
     def __len__(self):
@@ -266,8 +271,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
             data[key] = self.exp[key][:, idx: idx+self.seq_len]
         data["drops"] = self.get_drops(
             self.hyps,
-            data["grabs"],
-            data["is_animating"]
+            data["n_items"],
+            data["is_animating"],
+            data["dones"]
         )
         if self.hold_lang is not None:
           data["drops"][torch.isin(data["n_items"],self.hold_lang)] = 0
@@ -306,8 +312,73 @@ class ExperienceReplay(torch.utils.data.Dataset):
         else:
             raise StopIteration
 
+    #@staticmethod
+    #def get_drops(hyps, grabs, is_animating, dones):
+    #    """
+    #    Returns a tensor denoting steps in which the agent dropped an
+    #    item. This always means that the player is still on the item
+    #    when the prediction happens.
+    #    
+    #    WARNING: the returned tensor has been bastardized to simply
+    #    denote when the agent should make a language prediction about
+    #    n_items.
+
+    #    The tensor returned is also actually a LongTensor, not a Bool
+    #    Tensor. Assumes 1 means PILE, and 2 means BUTTON and 3 means
+    #    ITEM within the grabs tensor.
+
+    #    For variants 4 and 7, drops includes any frame in which the
+    #    targets are displayed.
+
+    #    Args:
+    #        hyps: dict
+    #            the hyperparameters
+    #            langall: bool
+    #            count_targs: bool
+    #            drops_perc_threshold: float
+    #            lang_targs_only: int
+    #                if 0, does nothing. If 1, will only return drops
+    #                where is_animating is true. This argument is
+    #                overridden by langall being true.
+    #                count_targs is overridden by this argument.
+    #        grabs: Long Tensor (B,N)
+    #            a tensor denoting the item grabbed by the agent at
+    #            each timestep. Assumes 1 means PILE, and 2 means BUTTON
+    #            and 3 means ITEM
+    #        is_animating: torch LongTensor (..., N)
+    #            0s denote the environment was not displaying the targets
+    #            anymore. 1s denote the targets were displayed
+    #        dones: torch LongTensor (..., N)
+    #            1 denotes the end of an episode. Should occur one time
+    #            step after the agent presses the ending button.
+    #    Returns:
+    #        drops: Long Tensor (B,N)
+    #            a tensor denoting if the agent dropped an item with a 1,
+    #            0 otherwise. See WARNING in description
+    #    """
+    #    if type(grabs) == type(np.asarray([])):
+    #        grabs = torch.from_numpy(grabs).long()
+
+    #    if try_key(hyps, "langall", False):
+    #        drops = torch.ones_like(grabs)
+    #    elif try_key(hyps, "lang_targs_only", 0) == 1:
+    #        drops = is_animating.clone()
+    #    else:
+    #        block = len(grabs)//len(hyps["env_types"])
+    #        drops = torch.zeros_like(grabs).long()
+    #        for i,env_type in enumerate(hyps["env_types"]):
+    #            temp = {**hyps, "env_type": env_type}
+    #            fxn = ExperienceReplay.get_drops_helper
+    #            drops[i*block:(i+1)*block] = fxn(
+    #                temp,
+    #                grabs[i*block:(i+1)*block],
+    #                is_animating[i*block:(i+1)*block],
+    #                dones[i*block:(i+1)*block]
+    #            )
+    #    return drops
+
     @staticmethod
-    def get_drops(hyps, grabs, is_animating):
+    def get_drops(hyps, n_items, is_animating, dones):
         """
         Returns a tensor denoting steps in which the agent dropped an
         item. This always means that the player is still on the item
@@ -335,107 +406,140 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     where is_animating is true. This argument is
                     overridden by langall being true.
                     count_targs is overridden by this argument.
-            grabs: Long Tensor (B,N)
-                a tensor denoting the item grabbed by the agent at
-                each timestep. Assumes 1 means PILE, and 2 means BUTTON
-                and 3 means ITEM
+            n_items: Long Tensor (B,N)
+                a tensor denoting the number of response items on the
+                grid.
             is_animating: torch LongTensor (..., N)
                 0s denote the environment was not displaying the targets
                 anymore. 1s denote the targets were displayed
+            dones: torch LongTensor (..., N)
+                1 denotes the end of an episode. Should occur one time
+                step after the agent presses the ending button.
         Returns:
             drops: Long Tensor (B,N)
                 a tensor denoting if the agent dropped an item with a 1,
                 0 otherwise. See WARNING in description
         """
-        if type(grabs) == type(np.asarray([])):
-            grabs = torch.from_numpy(grabs).long()
+        if type(n_items) == type(np.asarray([])):
+            n_items = torch.from_numpy(n_items).long()
+
         if try_key(hyps, "langall", False):
-            drops = torch.ones_like(grabs)
+            drops = torch.ones_like(n_items)
         elif try_key(hyps, "lang_targs_only", 0) == 1:
             drops = is_animating.clone()
         else:
-            block = len(grabs)//len(hyps["env_types"])
-            drops = torch.zeros_like(grabs).long()
+            block = len(n_items)//len(hyps["env_types"])
+            drops = torch.zeros_like(n_items).long()
             for i,env_type in enumerate(hyps["env_types"]):
                 temp = {**hyps, "env_type": env_type}
                 fxn = ExperienceReplay.get_drops_helper
                 drops[i*block:(i+1)*block] = fxn(
-                    temp,
-                    grabs[i*block:(i+1)*block],
-                    is_animating[i*block:(i+1)*block]
+                    n_items[i*block:(i+1)*block],
+                    is_animating[i*block:(i+1)*block],
+                    try_key(temp,"count_targs",False)
                 )
         return drops
 
+    #@staticmethod
+    #def get_drops_helper(hyps, grabs, is_animating, dones):
+    #    """
+    #    Assists the get_drops function.
+
+    #    Args:
+    #        hyps: dict
+    #            the hyperparameters
+    #            langall: bool
+    #            count_targs: bool
+    #            drops_perc_threshold: float
+    #            lang_targs_only: int
+    #                if 0, does nothing. If 1, will only return drops
+    #                where is_animating is true. This argument is
+    #                overridden by langall being true.
+    #                count_targs is overridden by this argument.
+    #        grabs: Long Tensor (B,N)
+    #            a tensor denoting the item grabbed by the agent at
+    #            each timestep. Assumes 1 means PILE, and 2 means BUTTON
+    #            and 3 means ITEM
+    #        is_animating: torch LongTensor (..., N)
+    #            0s denote the environment was not displaying the targets
+    #            anymore. 1s denote the targets were displayed
+    #        dones: torch LongTensor (..., N)
+    #            1 denotes the end of an episode. Should occur one time
+    #            step after the agent presses the ending button.
+    #    Returns:
+    #        drops: Long Tensor (B,N)
+    #            a tensor denoting if the agent dropped an item with a 1,
+    #            0 otherwise. See WARNING in description
+    #    """
+    #    drops = grabs.clone().long()
+    #    if hyps["env_type"] in {"gordongames-v4", "gordongames-v8"}:
+    #        drops[drops>0] = 1
+    #        
+    #        if len(drops.shape) == 2:
+    #            twos = torch.zeros((drops.shape[0],drops.shape[1]+1))
+    #            if drops.is_cuda: twos = twos.cuda()
+    #            twos[:,1:] = drops+1
+    #            drops[(drops+twos[:,:-1])==2] = 1
+    #        elif len(drops.shape) == 1:
+    #            twos = torch.zeros(drops.shape[0]+1)
+    #            if drops.is_cuda: twos = twos.cuda()
+    #            twos[1:] = drops+1
+    #            drops[(drops+twos[:-1])==2] = 1
+    #        if try_key(hyps, "count_targs", True):
+    #            drops = drops | (is_animating>0)
+    #        return drops
+    #    drops[grabs!=3] = 0
+    #    drops[grabs==3] = 1
+    #    # Looks for situations where the sum drops off to 0
+    #    if len(grabs.shape)==2:
+    #        drops[:, 1:] = drops[:, :-1] - drops[:, 1:]
+    #        drops[:,0] = 0
+    #        drops = torch.roll(drops, 1, -1)
+    #        drops[:,0] = 0
+    #    elif len(grabs.shape)==1:
+    #        drops[1:] = drops[:-1] - drops[1:]
+    #        drops[0] = 0
+    #        drops = torch.roll(drops, 1, -1)
+    #        drops[0] = 0
+    #    drops[drops!=1] = 0
+    #    drops[drops>0] = 1
+    #    if try_key(hyps, "count_targs", True):
+    #        drops = drops | (is_animating>0)
+    #    # In case less than 5% of the batch are drops, we set the last
+    #    # column to 1
+    #    perc_threshold = try_key(hyps,"drops_perc_threshold",0)
+    #    if drops.sum()<=(perc_threshold*drops.numel()):
+    #        if perc_threshold == 0: perc_threshold = 0.1
+    #        rand = torch.rand_like(drops.float())
+    #        rand[rand<=perc_threshold] = 1
+    #        rand[rand!=1] = 0
+    #        drops = drops | rand.long()
+    #    return drops
+
     @staticmethod
-    def get_drops_helper(hyps, grabs, is_animating):
+    def get_drops_helper(n_items, is_animating, count_targs=True):
         """
         Assists the get_drops function.
 
         Args:
-            hyps: dict
-                the hyperparameters
-                langall: bool
-                count_targs: bool
-                drops_perc_threshold: float
-                lang_targs_only: int
-                    if 0, does nothing. If 1, will only return drops
-                    where is_animating is true. This argument is
-                    overridden by langall being true.
-                    count_targs is overridden by this argument.
-            grabs: Long Tensor (B,N)
+            n_items: Long Tensor (...,N)
                 a tensor denoting the item grabbed by the agent at
                 each timestep. Assumes 1 means PILE, and 2 means BUTTON
                 and 3 means ITEM
             is_animating: torch LongTensor (..., N)
                 0s denote the environment was not displaying the targets
                 anymore. 1s denote the targets were displayed
+            count_targs: bool
+                boolean that when true will include the targets in the
+                drops
         Returns:
             drops: Long Tensor (B,N)
                 a tensor denoting if the agent dropped an item with a 1,
                 0 otherwise. See WARNING in description
         """
-        drops = grabs.clone().long()
-        if hyps["env_type"] in {"gordongames-v4", "gordongames-v8"}:
-            drops[drops>0] = 1
-            if len(drops.shape) == 2:
-                twos = torch.zeros((drops.shape[0],drops.shape[1]+1))
-                if drops.is_cuda: twos = twos.cuda()
-                twos[:,1:] = drops+1
-                drops[(drops+twos[:,:-1])==2] = 1
-            elif len(drops.shape) == 1:
-                twos = torch.zeros(drops.shape[0]+1)
-                if drops.is_cuda: twos = twos.cuda()
-                twos[1:] = drops+1
-                drops[(drops+twos[:-1])==2] = 1
-            if try_key(hyps, "count_targs", True):
-                drops = drops | (is_animating>0)
-            return drops
-        drops[grabs!=3] = 0
-        drops[grabs==3] = 1
-        # Looks for situations where the sum drops off to 0
-        if len(grabs.shape)==2:
-            drops[:, 1:] = drops[:, :-1] - drops[:, 1:]
-            drops[:,0] = 0
-            drops = torch.roll(drops, 1, -1)
-            drops[:,0] = 0
-        elif len(grabs.shape)==1:
-            drops[1:] = drops[:-1] - drops[1:]
-            drops[0] = 0
-            drops = torch.roll(drops, 1, -1)
-            drops[0] = 0
-        drops[drops!=1] = 0
-        drops[drops>0] = 1
-        if try_key(hyps, "count_targs", True):
+        drops = pre_step_up(n_items)|post_step_up(n_items)
+        if count_targs:
             drops = drops | (is_animating>0)
-        # In case less than 5% of the batch are drops, we set the last
-        # column to 1
-        perc_threshold = try_key(hyps,"drops_perc_threshold",0)
-        if drops.sum()<=(perc_threshold*drops.numel()):
-            if perc_threshold == 0: perc_threshold = 0.1
-            rand = torch.rand_like(drops.float())
-            rand[rand<=perc_threshold] = 1
-            rand[rand!=1] = 0
-            drops = drops | rand.long()
         return drops
 
 class DataCollector:
@@ -1094,10 +1198,16 @@ class ValidationRunner(Runner):
                     use_count_words=self.hyps["use_count_words"],
                     max_char_seq=self.hyps["max_char_seq"]
                 )
+                if try_key(self.hyps, "pre_grab_count", False):
+                    lang_labels = describe_then_prescribe(
+                        lang_labels,
+                        data["is_animating"]|data["dones"]
+                    )
                 drops = ExperienceReplay.get_drops(
                     self.hyps,
-                    data["grabs"],
-                    data["is_animating"]
+                    data["n_items"],
+                    data["is_animating"],
+                    data["dones"]
                 )
                 data["lang_targs"] = lang_labels
                 data["drops"] = drops
