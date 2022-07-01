@@ -50,8 +50,8 @@
 
     "randomize_order": false,
 
+    "pre_grab_count": false,
     "langall": false,
-    "drops_perc_threshold": 0.05,
     "count_targs": true,
     "lang_targs_only": false,
 
