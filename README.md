@@ -234,14 +234,17 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the paddings of the cnn layers. the number of items in this
         tuple should match that of the number of items in `depths`
 
+    "pre_grab_count": bool
+        if true, the language system will be trained to predict the
+        number of response items that will result from interacting
+        with the dispenser. Defaults to false which trains the lang
+        system to predict the number of response items currently on
+        the grid.
     "langall": bool
         if false, language predictions only occur when the agent drops
         an object. Otherwise the language predictions occur at every
         step. defaults to false. this parameter overrides `count_targs`
         and `lang_targs_only`
-    "drop_prec_threshold": float
-        if 0 no effect. Otherwise the drops array will randomly add
-        ones so that the language training signal is increased.
     "count_targs": bool
         LARGELY DEPRECATED!!! automatically set to false when
         `use_count_words` is 0, otherwise set to true.

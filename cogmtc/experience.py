@@ -406,6 +406,12 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     where is_animating is true. This argument is
                     overridden by langall being true.
                     count_targs is overridden by this argument.
+                pre_grab_count: bool
+                    if true, counting is done predictively for the
+                    next timestep during the response period.
+                    In implementation, if this arg is true, no drop
+                    is included after the agent is done dispensing
+                    response items.
             n_items: Long Tensor (B,N)
                 a tensor denoting the number of response items on the
                 grid.
@@ -436,7 +442,8 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 drops[i*block:(i+1)*block] = fxn(
                     n_items[i*block:(i+1)*block],
                     is_animating[i*block:(i+1)*block],
-                    try_key(temp,"count_targs",False)
+                    count_targs=try_key(temp,"count_targs",False),
+                    pre_grab_count=try_key(temp,"pre_grab_count",False)
                 )
         return drops
 
@@ -517,7 +524,10 @@ class ExperienceReplay(torch.utils.data.Dataset):
     #    return drops
 
     @staticmethod
-    def get_drops_helper(n_items, is_animating, count_targs=True):
+    def get_drops_helper(n_items,
+                         is_animating,
+                         count_targs=True,
+                         pre_grab_count=False):
         """
         Assists the get_drops function.
 
@@ -529,6 +539,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
             is_animating: torch LongTensor (..., N)
                 0s denote the environment was not displaying the targets
                 anymore. 1s denote the targets were displayed
+            pre_grab_count: bool
+                if true, the model does a predictive count word for the
+                next time step during the response period as opposed
+                to a descriptive count word for the current timestep
+                if pre_grab_count is False.
+
+                If True, then the drop is not included after the final
+                press of the dispenser button.
             count_targs: bool
                 boolean that when true will include the targets in the
                 drops
@@ -537,7 +555,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 a tensor denoting if the agent dropped an item with a 1,
                 0 otherwise. See WARNING in description
         """
-        drops = pre_step_up(n_items)|post_step_up(n_items)
+        drops = pre_step_up(n_items)
+        if not pre_grab_count:
+            drops = drops | post_step_up(n_items)
         if count_targs:
             drops = drops | (is_animating>0)
         return drops
