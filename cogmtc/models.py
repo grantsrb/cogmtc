@@ -263,7 +263,7 @@ class Model(CoreModule):
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
             bnorm=self.bnorm,
-            lnorm=self.lnorm
+            lnorm=False
         )
 
     def make_lang_denses(self, inpt_size=None):
@@ -296,7 +296,8 @@ class Model(CoreModule):
                     noise=self.dense_noise,
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
-                    bnorm=self.bnorm
+                    bnorm=self.bnorm,
+                    lnorm=False
                 )
             self.lang_denses.append(dense)
 
