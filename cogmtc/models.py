@@ -926,6 +926,217 @@ class VaryLSTM(Model):
             torch.cat(langs, dim=2)
         )
 
+class SymmetricLSTM(VaryLSTM):
+    """
+    A model with three LSTMs total. One for a "core cognition" system,
+    and one for each the language and action outputs.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_lstms = 3
+        self.n_lang_denses = 1
+
+        # Make LSTMs
+        # the core LSTM is already created from the super class
+        # under the name self.lstm
+        size = self.h_size + self.lang_size + self.actn_size
+        if self.skip_lstm:
+            # add additional h_size here for conditional input
+            size = self.flat_size + self.h_size + size
+        self.actn_lstm = nn.LSTMCell(size, self.h_size)
+        self.lang_lstm = nn.LSTMCell(size, self.h_size)
+
+        self.lstms = [self.lstm, self.actn_lstm, self.lang_lstm]
+        self.reset(1)
+
+        self.make_actn_dense()
+        self.make_lang_denses()
+
+    def get_vector_list(self, n, bsize, vsize):
+        """
+        Returns a list of vectors of dimensions (bsize, vsize) on the
+        appropriate device.
+
+        Args:
+            n: int
+                the number of vectors
+            bsize: int
+                the batchsize
+            vsize: int
+                the vector size (dimensionality of each vector)
+        Returns:
+            vecs: list of torch FloatTensor [N, (B,V)]
+                a list of length N with vectors of shape (B,V) on
+                the appropriate device
+        """
+        vecs = []
+        for i in range(n):
+            vecs.append(torch.zeros(bsize, vsize).float())
+        if self.is_cuda:
+            for i in range(n):
+                vecs[i] = vecs[i].to(self.get_device())
+        return vecs
+
+    def reset(self, batch_size=1):
+        """
+        Resets the memory vectors
+
+        Args:
+            batch_size: int
+                the size of the incoming batches
+        Returns:
+            None
+        """
+        self.hs = self.get_vector_list(
+            self.n_lstms, batch_size, self.h_size
+        )
+        self.cs = self.get_vector_list(
+            self.n_lstms, batch_size, self.h_size
+        )
+        self.actn = torch.zeros(batch_size, self.actn_size)
+        self.lang = torch.zeros(batch_size, self.lang_size)
+        if self.is_cuda:
+            d = self.get_device()
+            self.actn = self.actn.to(d)
+            self.lang = self.lang.to(d)
+
+        self.prev_hs = [self.hs]
+        self.prev_cs = [self.cs]
+        self.prev_actns = [self.actn]
+        self.prev_langs = [self.lang]
+
+    def partial_reset(self, dones):
+        """
+        Uses the done signals to reset appropriate parts of the h and
+        c vectors.
+
+        Args:
+            dones: torch LongTensor (B,)
+                h and c are zeroed along any row in which dones[row]==1
+        Returns:
+            h: torch FloatTensor (B, H)
+            c: torch FloatTensor (B, H)
+        """
+        mask = (1-dones).unsqueeze(-1)
+        hs = [h*mask for h in self.hs]
+        cs = [c*mask for c in self.cs]
+        actn = self.actn*mask
+        lang = self.lang*mask
+        return hs,cs,actn,lang
+
+    def reset_to_step(self, step=0):
+        """
+        This function resets all recurrent states in a model to the
+        previous recurrent state just after the argued step. So, the
+        model takes the 0th step then the 0th h and c vectors are the
+        h and c vectors just after the model took this step.
+
+        Args:
+            step: int
+                the index of the step to revert the recurrence to
+        """
+        assert step < len(self.prev_hs), "invalid step"
+        self.hs = self.prev_hs[step]
+        self.cs = self.prev_cs[step]
+        d = self.get_device()
+        if self.is_cuda:
+            self.hs = [h.detach().data.to(d) for h in self.hs]
+            self.cs = [c.detach().data.to(d) for c in self.cs]
+            self.actn = self.prev_actns[step].detach().data.to(d)
+            self.lang = self.prev_langs[step].detach().data.to(d)
+        else:
+            self.hs = [h.detach().data for h in self.hs]
+            self.cs = [c.detach().data for c in self.cs]
+            self.actn = self.prev_actns[step].detach().data
+            self.lang = self.prev_langs[step].detach().data
+
+    def step(self, x, cdtnl, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+                a single step of observations
+            cdtnl: torch FloatTensor (B, E)
+                the conditional latent vectors
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor (B, L)
+        """
+        if x.is_cuda:
+            self.actn = self.actn.to(x.get_device())
+            self.lang = self.lang.to(x.get_device())
+            for i in range(self.n_lstms):
+                self.hs[i] = self.hs[i].to(x.get_device())
+                self.cs[i] = self.cs[i].to(x.get_device())
+        fx = self.features(x)
+        fx = fx.reshape(len(x), -1) # (B, N)
+        cat = torch.cat([fx, cdtnl], dim=-1)
+
+        h, c = self.lstm( cat, (self.hs[0], self.cs[0]) )
+        if self.lnorm:
+            c = self.layernorm_c(c)
+            h = self.layernorm_h(h)
+        if self.skip_lstm: 
+            inpt = torch.cat([cat,h,self.actn,self.lang],dim=-1)
+        else:
+            inpt = torch.cat([h,self.actn,self.lang],dim=-1)
+
+        actn_h, actn_c = self.actn_lstm( inpt, (self.hs[1], self.cs[1]) )
+        actn = self.actn_dense(actn_h)
+        self.actn = actn.detach().data
+
+        lang_h, lang_c = self.lang_lstm( inpt, (self.hs[1], self.cs[1]) )
+        lang = self.lang_denses[0](lang_h)
+        self.lang = lang.detach().data
+
+        self.hs = [h, actn_h, lang_h]
+        self.cs = [c, actn_c, lang_c]
+        return self.output_fxn(actn), [lang]
+
+    def forward(self, x, dones, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+            dones: torch Long Tensor (B, S)
+                the done signals for the environment. the h and c
+                vectors are reset when encountering a done signal
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+            langs: torch FloatTensor (N,B,S,L)
+        """
+        cdtnl = self.cdtnl_lstm(self.cdtnl_idxs)
+        seq_len = x.shape[1]
+        actns = []
+        langs = []
+        self.prev_hs = []
+        self.prev_cs = []
+        self.prev_actns = []
+        self.prev_langs = []
+        if x.is_cuda:
+            dones = dones.to(x.get_device())
+        cb = self.cdtnl_batch.repeat_interleave(len(x)//self.n_envs)
+        for s in range(seq_len):
+            actn, lang = self.step(x[:,s], cdtnl[cb])
+            actns.append(actn.unsqueeze(1))
+            lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
+            langs.append(lang)
+
+            self.actn = actn.detach().data
+            self.lang = lang[0].detach().data
+            tup = self.partial_reset(dones[:,s])
+            self.hs, self.cs, self.actn, self.lang = tup
+            self.prev_hs.append([h.detach().data for h in self.hs])
+            self.prev_cs.append([c.detach().data for c in self.cs])
+            self.prev_actns.append(self.actn)
+            self.prev_langs.append(self.lang)
+        return (
+            self.output_fxn(torch.cat(actns, dim=1)),
+            torch.cat(langs, dim=2)
+        )
+
+
 class DoubleVaryLSTM(VaryLSTM):
     """
     A model with two LSTMs. One for each the language and action outputs.
@@ -936,6 +1147,7 @@ class DoubleVaryLSTM(VaryLSTM):
         self.lstm0 = self.lstm
         size = self.h_size
         if self.skip_lstm: 
+            # Multiply h_size by two for the conditional input
             size = self.flat_size+2*self.h_size
         self.lstm1 = nn.LSTMCell(size, self.h_size)
         self.reset(1)
