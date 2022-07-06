@@ -929,4 +929,17 @@ def hyps_error_catching(hyps):
         )
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
+    
+    if "incl_lang_inpts" in hyps and "incl_lang_inpt" not in hyps:
+        hyps["incl_lang_inpt"] = hyps["incl_lang_inpts"]
+        print("Fixing plural mistake, incl_lang_inpts to incl_lang_inpt")
+    if "lstm_lang_inpt" in hyps and "incl_lang_inpt" not in hyps:
+        hyps["incl_lang_inpt"] = hyps["lstm_lang_inpt"]
+        print("Fixing naming mistake, lstm_lang_inpt to incl_lang_inpt")
+    if "incl_actn_inpts" in hyps and "incl_actn_inpt" not in hyps:
+        hyps["incl_actn_inpt"] = hyps["incl_actn_inpts"]
+        print("Fixing plural mistake, incl_actn_inpts to incl_actn_inpt")
+    if "lstm_actn_inpt" in hyps and "incl_actn_inpt" not in hyps:
+        hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
+        print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
 
