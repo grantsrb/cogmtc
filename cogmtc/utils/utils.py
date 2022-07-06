@@ -522,7 +522,8 @@ def get_loss_and_accs(phase,
                       loss_fxn=F.cross_entropy,
                       lang_p=0.5,
                       base=None,
-                      max_char_seq=None):
+                      max_char_seq=None,
+                      null_alpha=0.1):
     """
     Calculates the loss and accuracies depending on the phase of
     the training.
@@ -564,6 +565,12 @@ def get_loss_and_accs(phase,
         max_char_seq: int or None
             if using numeral system, this is the maximum number of
             prediction that the language model makes per time step
+        null_alpha: float
+            a hyperparameter to adjust how much weight should be placed
+            on producing zeros for the base numeral system outputs
+            following the STOP token. loss is calculated as
+            loss += null_alpha*null_loss
+            (It is not a proportionality parameter)
     Returns:
         loss: torch float tensor (1,)
             the appropriate loss for the phase
@@ -595,7 +602,8 @@ def get_loss_and_accs(phase,
             categories=n_items,
             prepender=prepender,
             base=base,
-            max_char_seq=max_char_seq
+            max_char_seq=max_char_seq,
+            null_alpha=null_alpha
         )
     actn_accs = {}
     if phase == 1 or phase == 2:
@@ -653,7 +661,8 @@ def calc_lang_loss_and_accs(preds,
                             categories,
                             base=None,
                             max_char_seq=None,
-                            prepender=""):
+                            prepender="",
+                            null_alpha=0.1):
     """
     Args:
         preds: sequence of torch FloatTensors [(B,S,L),(B,S,L),...]
@@ -679,6 +688,12 @@ def calc_lang_loss_and_accs(preds,
             predictions contained within L (the preds last dim)
         prepender: str
             a string to prepend to all keys in the accs dict
+        null_alpha: float
+            a hyperparameter to adjust how much weight should be placed
+            on producing zeros for the base numeral system outputs
+            following the STOP token.
+            loss is calculated as loss += null_alpha*null_loss
+            (It is not a proportionality parameter)
     Returns:
         loss: torch float tensor (1,)
         losses: dict
@@ -701,12 +716,17 @@ def calc_lang_loss_and_accs(preds,
         drops = drops.repeat_interleave(n)
         categories = categories.repeat_interleave(n)
     idxs = (drops==1)&(labels>=0)
+    if base is not None: null_idxs = (drops==1)&(labels<0)
     categories = categories[idxs]
     labels = labels[idxs].to(DEVICE)
     loss = 0
     for j,lang in enumerate(preds):
         if base is not None:
             lang = lang.reshape(-1, base+1)
+            if null_alpha > 0:
+                nulls = lang[null_idxs]
+                null_loss = F.mse_loss(nulls, torch.zeros_like(nulls))
+                loss += null_alpha*null_loss/lang.shape[-1]
         else:
             lang = lang.reshape(-1, lang.shape[-1])
         lang = lang[idxs]

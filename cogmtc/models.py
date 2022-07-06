@@ -106,6 +106,8 @@ class Model(CoreModule):
         skip_lstm=False,
         max_char_seq=1,
         lstm_lang=False,
+        incl_lang_inpt=True,
+        incl_actn_inpt=False,
         *args, **kwargs
     ):
         """
@@ -193,6 +195,16 @@ class Model(CoreModule):
                 and using a numeral system, a single dense net makes
                 all numeral predictions at the same time. Does not
                 affect anything if not using numeral system
+            incl_actn_inpt: bool
+                if true, for the SymmetricLSTM, the softmax of the
+                action output for the last timestep is included as
+                input into the language and action lstms. If false,
+                the action output is not included.
+            incl_lang_inpt: bool
+                if true, for the SymmetricLSTM, the softmax of the
+                language output for the last timestep is included as
+                input into the language and action lstms. If false,
+                the language output is not included.
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -233,6 +245,8 @@ class Model(CoreModule):
         if isinstance(paddings, int):
             self.paddings=[paddings for i in range(len(depths))]
         self.skip_lstm = skip_lstm
+        self.incl_actn_inpt = incl_actn_inpt
+        self.incl_lang_inpt = incl_lang_inpt
 
     def initialize_conditional_variables(self):
         """
@@ -273,6 +287,9 @@ class Model(CoreModule):
         # from a single output
         lang_size = self.lang_size
         if self.max_char_seq is not None and self.max_char_seq>1:
+            # if lstm_lang is true, the language lstm needs the base
+            # numeral as its language size. if false, we can think of
+            # the output as a concatenated vector
             if not self.lstm_lang:lang_size=lang_size*self.max_char_seq
         for i in range(self.n_lang_denses):
             if self.lstm_lang:
@@ -939,14 +956,20 @@ class SymmetricLSTM(VaryLSTM):
         # Make LSTMs
         # the core LSTM is already created from the super class
         # under the name self.lstm
-        size = self.h_size + self.lang_size + self.actn_size
+        size = self.h_size
+        if self.incl_lang_inpt:
+            self.cat_lang_size = self.lang_size
+            if self.max_char_seq is not None:
+                self.cat_lang_size = self.cat_lang_size*self.max_char_seq
+            size = size + self.cat_lang_size
+        if self.incl_actn_inpt:
+            size += self.actn_size
         if self.skip_lstm:
             # add additional h_size here for conditional input
             size = self.flat_size + self.h_size + size
         self.actn_lstm = nn.LSTMCell(size, self.h_size)
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
 
-        self.lstms = [self.lstm, self.actn_lstm, self.lang_lstm]
         self.reset(1)
 
         self.make_actn_dense()
@@ -1077,18 +1100,33 @@ class SymmetricLSTM(VaryLSTM):
         if self.lnorm:
             c = self.layernorm_c(c)
             h = self.layernorm_h(h)
+
+        inpt = [h]
+        if self.incl_actn_inpt:
+            inpt.append(self.actn)
+        if self.incl_lang_inpt:
+            if self.lang.shape[-1] < self.cat_lang_size:
+                l = torch.zeros(len(x),self.cat_lang_size)
+                if x.is_cuda: l = l.to(x.get_device())
+                inpt.append(l)
+            else:
+                inpt.append(self.lang)
         if self.skip_lstm: 
-            inpt = torch.cat([cat,h,self.actn,self.lang],dim=-1)
-        else:
-            inpt = torch.cat([h,self.actn,self.lang],dim=-1)
+            inpt.append(cat)
+        inpt = torch.cat(inpt, dim=-1)
 
         actn_h, actn_c = self.actn_lstm( inpt, (self.hs[1], self.cs[1]) )
         actn = self.actn_dense(actn_h)
-        self.actn = actn.detach().data
+        self.actn = nn.functional.softmax( actn.detach().data, dim=-1 )
 
-        lang_h, lang_c = self.lang_lstm( inpt, (self.hs[1], self.cs[1]) )
+        lang_h, lang_c = self.lang_lstm( inpt, (self.hs[2], self.cs[2]) )
         lang = self.lang_denses[0](lang_h)
         self.lang = lang.detach().data
+        if self.max_char_seq is not None and self.max_char_seq>1:
+            og_shape = self.lang.shape
+            self.lang = nn.functional.softmax(self.lang.reshape(
+                len(x), self.max_char_seq, self.lang_size
+            ), dim=-1).reshape(og_shape)
 
         self.hs = [h, actn_h, lang_h]
         self.cs = [c, actn_c, lang_c]
@@ -1123,8 +1161,6 @@ class SymmetricLSTM(VaryLSTM):
             lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
             langs.append(lang)
 
-            self.actn = actn.detach().data
-            self.lang = lang[0].detach().data
             tup = self.partial_reset(dones[:,s])
             self.hs, self.cs, self.actn, self.lang = tup
             self.prev_hs.append([h.detach().data for h in self.hs])

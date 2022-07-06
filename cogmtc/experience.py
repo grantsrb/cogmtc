@@ -1241,7 +1241,8 @@ class ValidationRunner(Runner):
                     n_targs,
                     env_type,
                     base=self.hyps["numeral_base"],
-                    max_char_seq=self.hyps["max_char_seq"]
+                    max_char_seq=self.hyps["max_char_seq"],
+                    null_alpha=try_key(self.hyps,"null_alpha",0.1)
                 )
 
                 # Convert language predictions to appropriate form
@@ -1396,6 +1397,7 @@ class ValidationRunner(Runner):
                         env_type,
                         base=None,
                         max_char_seq=None,
+                        null_alpha=0.1,
                         save_name="epoch_stats.csv"):
         """
         Saves the loss and acc stats averaged over all episodes in the
@@ -1415,6 +1417,12 @@ class ValidationRunner(Runner):
             max_char_seq: int or None
                 the number of numeral predictions per sample if using
                 use_count_words==NUMERAL
+            null_alpha: float
+                a hyperparameter to adjust how much weight should be placed
+                on producing zeros for the base numeral system outputs
+                following the STOP token. loss is calculated as
+                loss += null_alpha*null_loss
+                (It is not a proportionality parameter)
             save_name: str
         """
         with torch.no_grad():
@@ -1430,7 +1438,8 @@ class ValidationRunner(Runner):
                 prepender="",
                 loss_fxn=self.loss_fxn,
                 base=base,
-                max_char_seq=max_char_seq
+                max_char_seq=max_char_seq,
+                null_alpha=null_alpha
             )
             s = ""
             for k in accs:

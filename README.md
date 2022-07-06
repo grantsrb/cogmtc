@@ -194,6 +194,15 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "incl_actn_inpt": bool
+        if true, for the SymmetricLSTM, the softmax of the action output
+        for the last timestep is included as input into the language
+        and action lstms. If false, the action output is not included.
+    "incl_lang_inpt": bool
+        if true, for the SymmetricLSTM, the softmax of the language
+        output for the last timestep is included as input into the
+        language and action lstms. If false, the language output is
+        not included.
     "skip_lstm": bool
         if true, the features are inluded using a skip connection
         to the second lstm. Only applies in DoubleVaryLSTM variants
@@ -208,6 +217,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_p": float between 0 and 1
         the portion of the loss during the second phase attributed
         to language.
+    "null_alpha": float
+        a hyperparameter to adjust how much weight should be placed
+        on producing zeros for the base numeral system outputs
+        following the STOP token. loss is calculated as
+        loss += null_alpha*null_loss
+        (It is not a proportionality parameter like `lang_p`)
     "conv_noise": float
         the standard deviation of gaussian noise applied to the
         convolutional layers of the model. if 0, has no effect

@@ -25,6 +25,8 @@
 
     "model_type": "DoubleVaryLSTM",
     "lstm_lang_first": true,
+    "incl_lang_inpt": true,
+    "incl_actn_inpt": false,
 
     "output_fxn": "Tanh",
     "h_size": 256,
@@ -38,6 +40,7 @@
     "lr": 0.00025,
     "l2": 0.001,
     "lang_p": 0.5,
+    "null_alpha": 0.1,
     "conv_noise": 0,
     "dense_noise": 0,
     "feat_drop_p": 0.05,

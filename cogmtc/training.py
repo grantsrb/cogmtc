@@ -477,7 +477,8 @@ class Trainer:
                 # this is set to None if not using NUMERAL system
                 base=self.hyps["numeral_base"],
                 # this is set to None if not using NUMERAL system
-                max_char_seq=self.hyps["max_char_seq"]
+                max_char_seq=self.hyps["max_char_seq"],
+                null_alpha=try_key(self.hyps, "null_alpha", 0.1)
             )
             # Backprop and update
             loss.backward()
