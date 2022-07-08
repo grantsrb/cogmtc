@@ -27,6 +27,7 @@
     "lstm_lang_first": true,
     "incl_lang_inpt": true,
     "incl_actn_inpt": false,
+    "one_hot_inpt": false,
 
     "output_fxn": "Tanh",
     "h_size": 256,

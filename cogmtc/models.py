@@ -5,9 +5,14 @@ import torch
 import torch.nn as nn
 from torch.nn import *
 from cogmtc.utils.torch_modules import *
-from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask
+from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask, max_one_hot
 from cogmtc.envs import TORCH_CONDITIONALS, CDTNL_LANG_SIZE
 import matplotlib.pyplot as plt
+
+class LANGACTN_TYPES:
+    SOFTMAX = 0
+    ONEHOT = 1
+    HVECTOR = 2
 
 def get_fcnet(inpt_size,
               outp_size,
@@ -108,6 +113,7 @@ class Model(CoreModule):
         lstm_lang=False,
         incl_lang_inpt=True,
         incl_actn_inpt=False,
+        langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
         *args, **kwargs
     ):
         """
@@ -196,15 +202,27 @@ class Model(CoreModule):
                 all numeral predictions at the same time. Does not
                 affect anything if not using numeral system
             incl_actn_inpt: bool
-                if true, for the SymmetricLSTM, the softmax of the
-                action output for the last timestep is included as
+                if true, for the SymmetricLSTM, the softmax or one-hot
+                encoding or h vector (depending on `langactn_inpt_type`)
+                of the action output for the last timestep is included as
                 input into the language and action lstms. If false,
                 the action output is not included.
             incl_lang_inpt: bool
-                if true, for the SymmetricLSTM, the softmax of the
-                language output for the last timestep is included as
-                input into the language and action lstms. If false,
+                if true, for the SymmetricLSTM, the softmax or one-hot
+                encoding or h vector (depending on `langactn_inpt_type`)
+                of the language output for the last timestep is included
+                as input into the language and action lstms. If false,
                 the language output is not included.
+            langactn_inpt_type: int
+                Pretains to the incl_actn_inpt and incl_lang_inpt.
+                Determines whether the input should be the softmax of
+                the output, a one-hot encoding of the output, or the
+                recurrent state vector that produced the output.
+
+                options are:
+                    0: LANGACTN_TYPES.SOFTMAX
+                    1: LANGACTN_TYPES.ONEHOT
+                    2: LANGACTN_TYPES.HVECTOR
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -247,6 +265,7 @@ class Model(CoreModule):
         self.skip_lstm = skip_lstm
         self.incl_actn_inpt = incl_actn_inpt
         self.incl_lang_inpt = incl_lang_inpt
+        self.langactn_inpt_type = langactn_inpt_type
 
     def initialize_conditional_variables(self):
         """
@@ -958,12 +977,19 @@ class SymmetricLSTM(VaryLSTM):
         # under the name self.lstm
         size = self.h_size
         if self.incl_lang_inpt:
-            self.cat_lang_size = self.lang_size
-            if self.max_char_seq is not None:
-                self.cat_lang_size = self.cat_lang_size*self.max_char_seq
-            size = size + self.cat_lang_size
+            if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+                size = size + self.h_size
+            else:
+                self.cat_lang_size = self.lang_size
+                if self.max_char_seq is not None:
+                    mcs = self.max_char_seq
+                    self.cat_lang_size = self.cat_lang_size*mcs
+                size = size + self.cat_lang_size
         if self.incl_actn_inpt:
-            size += self.actn_size
+            if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+                size = size + self.h_size
+            else:
+                size += self.actn_size
         if self.skip_lstm:
             # add additional h_size here for conditional input
             size = self.flat_size + self.h_size + size
@@ -1016,8 +1042,12 @@ class SymmetricLSTM(VaryLSTM):
         self.cs = self.get_vector_list(
             self.n_lstms, batch_size, self.h_size
         )
-        self.actn = torch.zeros(batch_size, self.actn_size)
-        self.lang = torch.zeros(batch_size, self.lang_size)
+        if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+            self.actn = torch.zeros(batch_size, self.h_size)
+            self.lang = torch.zeros(batch_size, self.h_size)
+        else:
+            self.actn = torch.zeros(batch_size, self.actn_size)
+            self.lang = torch.zeros(batch_size, self.lang_size)
         if self.is_cuda:
             d = self.get_device()
             self.actn = self.actn.to(d)
@@ -1105,7 +1135,8 @@ class SymmetricLSTM(VaryLSTM):
         if self.incl_actn_inpt:
             inpt.append(self.actn)
         if self.incl_lang_inpt:
-            if self.lang.shape[-1] < self.cat_lang_size:
+            if self.langactn_inpt_type != LANGACTN_TYPES.HVECTOR and\
+                            self.lang.shape[-1] < self.cat_lang_size:
                 l = torch.zeros(len(x),self.cat_lang_size)
                 if x.is_cuda: l = l.to(x.get_device())
                 inpt.append(l)
@@ -1117,16 +1148,27 @@ class SymmetricLSTM(VaryLSTM):
 
         actn_h, actn_c = self.actn_lstm( inpt, (self.hs[1], self.cs[1]) )
         actn = self.actn_dense(actn_h)
-        self.actn = nn.functional.softmax( actn.detach().data, dim=-1 )
 
         lang_h, lang_c = self.lang_lstm( inpt, (self.hs[2], self.cs[2]) )
         lang = self.lang_denses[0](lang_h)
-        self.lang = lang.detach().data
-        if self.max_char_seq is not None and self.max_char_seq>1:
-            og_shape = self.lang.shape
-            self.lang = nn.functional.softmax(self.lang.reshape(
-                len(x), self.max_char_seq, self.lang_size
-            ), dim=-1).reshape(og_shape)
+
+        if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+            self.actn = actn_h.detach().data
+            self.lang = lang_h.detach().data
+        else:
+            if self.langactn_inpt_type == LANGACTN_TYPES.SOFTMAX:
+                fxn = nn.functional.softmax
+            if self.langactn_inpt_type == LANGACTN_TYPES.ONEHOT:
+                fxn = max_one_hot
+            self.actn = fxn( actn.detach().data, dim=-1 )
+            self.lang = lang.detach().data
+            if self.max_char_seq is not None and self.max_char_seq>1:
+                og_shape = self.lang.shape
+                new_shape = (len(x), self.max_char_seq, self.lang_size)
+                self.lang = fxn( self.lang.reshape(new_shape), dim=-1 )
+                self.lang = self.lang.reshape(og_shape)
+            else:
+                self.lang = fxn(self.lang, dim=-1)
 
         self.hs = [h, actn_h, lang_h]
         self.cs = [c, actn_c, lang_c]

@@ -907,3 +907,16 @@ def get_transformer_fwd_mask(s):
     """
     return torch.triu(torch.ones(s,s)*float("-inf"), diagonal=1)
 
+def max_one_hot(tensor, dim=-1):
+    """
+    Creates one-hot encodings of the maximum values from the argued
+    tensor.
+
+    Args:
+        tensor: torch Tensor (..., N)
+    Returns:
+        one_hots: torch FloatTensor (..., N)
+    """
+    args = torch.argmax(tensor, dim=dim)[...,None]
+    return (tensor==torch.gather(tensor, -1, args)).float()
+

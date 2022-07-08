@@ -171,6 +171,27 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         be used for the action layers. If False, the second h
         vector will be used for language and the first h for
         actions. Defaults to True
+    "incl_actn_inpt": bool
+        if true, for the SymmetricLSTM, the softmax or one-hot
+        encoding or h vector (depending on `langactn_inpt_type`)
+        of the action output for the last timestep is included as
+        input into the language and action lstms. If false,
+        the action output is not included.
+    "incl_lang_inpt": bool
+        if true, for the SymmetricLSTM, the softmax or one-hot
+        encoding or h vector (depending on `langactn_inpt_type`)
+        of the language output for the last timestep is included as
+        input into the language and action lstms. If false,
+        the language output is not included.
+    "langactn_inpt_type": int
+        Pretains to the incl_actn_inpt and incl_lang_inpt.
+        Determines whether the input should be the softmax of
+        the output, a one-hot encoding of the output, or the
+        recurrent state vector that produced the output.
+        options are:
+            0: LANGACTN_TYPES.SOFTMAX
+            1: LANGACTN_TYPES.ONEHOT
+            2: LANGACTN_TYPES.HVECTOR
 
     "output_fxn": str
         the name of the output function for the model. if no output
@@ -194,15 +215,6 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
-    "incl_actn_inpt": bool
-        if true, for the SymmetricLSTM, the softmax of the action output
-        for the last timestep is included as input into the language
-        and action lstms. If false, the action output is not included.
-    "incl_lang_inpt": bool
-        if true, for the SymmetricLSTM, the softmax of the language
-        output for the last timestep is included as input into the
-        language and action lstms. If false, the language output is
-        not included.
     "skip_lstm": bool
         if true, the features are inluded using a skip connection
         to the second lstm. Only applies in DoubleVaryLSTM variants
