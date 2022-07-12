@@ -193,6 +193,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
             1: LANGACTN_TYPES.ONEHOT
             2: LANGACTN_TYPES.HVECTOR
 
+    "zero_after_stop": bool
+        only used for the NUMERAL trainings when `langactn_inpt_type`
+        is equal to 0 or 1 and `incl_lang_inpt` is true. If
+        `zero_after_stop` is true, all values following a STOP prediction
+        (including the STOP prediction itself) in the language
+        prediction that is used as input on the next time step are set
+        to zero.
     "output_fxn": str
         the name of the output function for the model. if no output
         fxn is wanted, leave as null or specify "NullOp"

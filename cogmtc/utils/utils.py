@@ -918,5 +918,7 @@ def max_one_hot(tensor, dim=-1):
         one_hots: torch FloatTensor (..., N)
     """
     args = torch.argmax(tensor, dim=dim)[...,None]
-    return (tensor==torch.gather(tensor, -1, args)).float()
+    mask = torch.zeros_like(tensor).scatter_(-1, args, torch.ones_like(tensor))
+    #mask = (tensor==torch.gather(tensor, -1, args)).float()
+    return mask
 

@@ -906,6 +906,13 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
         
+    # No Language Variant
+    if hyps["use_count_words"]==-1:
+        hyps["use_count_words"] = 1
+        hyps["second_phase"] = 1
+        hyps["incl_lang_inpt"] = False
+        hyps["incl_actn_inpt"] = False
+
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]
     if try_key(hyps, "lang_targs_only", False) and\
@@ -942,4 +949,6 @@ def hyps_error_catching(hyps):
     if "lstm_actn_inpt" in hyps and "incl_actn_inpt" not in hyps:
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
+
+
 

@@ -13,6 +13,7 @@ class LANGACTN_TYPES:
     SOFTMAX = 0
     ONEHOT = 1
     HVECTOR = 2
+    CONSOLIDATE = 3
 
 def get_fcnet(inpt_size,
               outp_size,
@@ -110,10 +111,13 @@ class Model(CoreModule):
         paddings=[0, 0],
         skip_lstm=False,
         max_char_seq=1,
+        STOP=1,
         lstm_lang=False,
         incl_lang_inpt=True,
         incl_actn_inpt=False,
         langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
+        zero_after_stop=False,
+        use_count_words=None,
         *args, **kwargs
     ):
         """
@@ -195,6 +199,9 @@ class Model(CoreModule):
             max_char_seq: int or None
                 if int, it is the number of language tokens to predict
                 at every step
+            STOP: int
+                the index of the STOP token (if one exists). Only
+                necessary for NUMERAL type models.
             lstm_lang: bool
                 if you want to use an additional lstm to output the
                 language for numeral systems, set this to true. if false
@@ -223,6 +230,16 @@ class Model(CoreModule):
                     0: LANGACTN_TYPES.SOFTMAX
                     1: LANGACTN_TYPES.ONEHOT
                     2: LANGACTN_TYPES.HVECTOR
+                    3: LANGACTN_TYPES.CONSOLIDATE
+            zero_after_stop: bool
+                only used for the NUMERAL trainings when
+                `langactn_inpt_type` is equal to 0 or 1 and
+                `incl_lang_inpt` is true. If `zero_after_stop` is true,
+                all values following a STOP prediction (including the
+                STOP prediction itself) in the language prediction that
+                is used as input on the next time step are set to zero.
+            use_count_words: int
+                the type of language training
         """
         super().__init__()
         self.inpt_shape = inpt_shape
@@ -247,6 +264,7 @@ class Model(CoreModule):
         self.n_layers = n_layers
         self.seq_len = seq_len
         self.max_char_seq = max_char_seq
+        self.STOP = STOP
         self.lstm_lang = lstm_lang
         if output_fxn is None: output_fxn = "NullOp"
         self.output_fxn = globals()[output_fxn]()
@@ -266,6 +284,8 @@ class Model(CoreModule):
         self.incl_actn_inpt = incl_actn_inpt
         self.incl_lang_inpt = incl_lang_inpt
         self.langactn_inpt_type = langactn_inpt_type
+        self.zero_after_stop = zero_after_stop
+        self.use_count_words = use_count_words
 
     def initialize_conditional_variables(self):
         """
@@ -460,7 +480,7 @@ class NumeralLangLSTM(nn.Module):
             noise=0,
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
-            lnorm=self.lnorm
+            lnorm=False
         )
 
     def forward(self, x):
@@ -474,6 +494,167 @@ class NumeralLangLSTM(nn.Module):
         B,N,H = fx.shape
         fx = self.dense(fx.reshape(-1,H))
         return fx.reshape(B,-1)
+
+def identity(x, *args, **kwargs):
+    return x
+
+class InptConsolidationModule(nn.Module):
+    """
+    This is a module to assist in converting the raw output from a
+    language or action prediction into a single vector representation
+    to be used as input to an LSTM module in the next timestep.
+
+    It recieves a batch of vectors that will be processeed in line with
+    the LANGACTN_TYPES designations. This is especially useful for the
+    Numeral models that have variable length numeric outputs. This
+    class creates a single vector representation by either concatenation,
+    or through recurrent consolidation.
+    """
+    def __init__(self, inpt_size,
+                       langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
+                       use_count_words=None,
+                       zero_after_stop=False,
+                       h_size=None,
+                       max_char_seq=1,
+                       STOP=1,
+                       n_outlayers=1,
+                       h_mult=3,
+                       drop_p=0,
+                       actv_fxn="ReLU",
+                       lnorm=True,
+                       *args,**kwargs):
+        """
+        Args:
+            inpt_size: int
+                size of the inputs that need a transformation or
+                consolidation
+            langactn_inpt_type: int
+                Pretains to the incl_actn_inpt and incl_lang_inpt.
+                Determines whether the input should be the softmax of
+                the output, a one-hot encoding of the output, or the
+                recurrent state vector that produced the output.
+
+                options are:
+                    0: LANGACTN_TYPES.SOFTMAX
+                    1: LANGACTN_TYPES.ONEHOT
+                    2: LANGACTN_TYPES.HVECTOR
+                    3: LANGACTN_TYPES.CONSOLIDATE
+            zero_after_stop: bool
+                only used for the NUMERAL trainings when
+                `langactn_inpt_type` is equal to 0 or 1 and
+                `incl_lang_inpt` is true. If `zero_after_stop` is true,
+                all values following a STOP prediction (including the
+                STOP prediction itself) in the language prediction that
+                is used as input on the next time step are set to zero.
+            use_count_words: int
+                the type of language training
+            h_size: int
+                hidden size of lstm if consolidating a sequence
+            max_char_seq: int
+            STOP: int
+                index of stop token (if one exists). only matters if
+                max_char_seq is greater than 1
+            n_outlayers: int
+            drop_p: float
+            lnorm: bool
+        """
+        super().__init__()
+        self.inpt_size = inpt_size
+        self.h_size = h_size
+        self.langactn_inpt_type = langactn_inpt_type
+        self.zero_after_stop = zero_after_stop
+        self.use_count_words = use_count_words
+        self.mcs = 1 if max_char_seq is None or max_char_seq < 1\
+                     else max_char_seq
+        self.lang_size = self.inpt_size//self.mcs
+        self.STOP = STOP
+        self.n_outlayers = n_outlayers
+        self.h_mult = h_mult
+        self.lnorm = lnorm
+        self.drop_p = drop_p
+        self.actv_fxn = actv_fxn
+        if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+            self.consolidator = identity
+            self.out_fxn = get_fcnet(
+                inpt_size=self.inpt_size,
+                outp_size=self.h_size,
+                n_layers=self.n_outlayers,
+                h_size=self.h_size*self.h_mult,
+                noise=0,
+                drop_p=self.drop_p,
+                actv_fxn=self.actv_fxn,
+                lnorm=False
+            )
+        else:
+            if self.use_count_words == 5:
+                self.consolidator = self.reshape_and_extract
+                if self.zero_after_stop:
+                    self.out_fxn = self.set_zero_after_stop
+                else:
+                    self.out_fxn = identity
+            else:
+                if self.langactn_inpt_type==LANGACTN_TYPES.SOFTMAX:
+                    self.consolidator = nn.functional.softmax
+                    self.out_fxn = identity
+                elif self.langactn_inpt_type==LANGACTN_TYPES.ONEHOT:
+                    self.consolidator = max_one_hot
+                    self.out_fxn = identity
+
+    def reshape_and_extract(self, inpt, *args, **kwargs):
+        """
+        Only used for variable length number sequences. This returns
+        a function that reshapes the input to the mcs, performs a
+        softmax (or equivalent) and then reshapes back.
+
+        inpt: torch Tensor (..., N)
+            N must be divisible by self.mcs
+        """
+        if self.langactn_inpt_type == LANGACTN_TYPES.SOFTMAX:
+            fxn = nn.functional.softmax
+        elif self.langactn_inpt_type == LANGACTN_TYPES.ONEHOT:
+            fxn = max_one_hot
+        else: raise NotImplemented
+        og_shape = inpt.shape
+        inpt = inpt.reshape((len(inpt), self.mcs, -1))
+        # Fail safe so that a stop prediction always exists at last
+        # entry in the sequence
+        inpt[:, -1, self.STOP] = inpt[:,-1].max(-1)[0]+1
+        inpt = fxn( inpt.float(), dim=-1 ).reshape(og_shape)
+        return inpt
+
+    def set_zero_after_stop(self, inpt, *args, **kwargs):
+        """
+        Only used for variable length number sequences. This returns
+        a function that locates the STOP token prediction and zeros
+        all following predictions
+
+        inpt: torch tensor (B, N)
+            N must be divisible by self.mcs
+        """
+        og_shape = inpt.shape
+        if self.mcs is None or self.mcs <= 1: return inpt
+        # inpt at this point is shaped (B, N) but we want (B, M, N)
+        inpt = inpt.reshape((len(inpt), self.mcs, -1))
+        argmaxes = torch.argmax(inpt, dim=-1) # (B,M)
+        mask = (argmaxes==self.STOP).float()
+        for i in range(1, self.mcs):
+            mask[:,i] = mask[:,i-1]+mask[:,i]
+        mask[mask>1] = 1
+        inpt = inpt*(1-mask.unsqueeze(-1))
+        return inpt.reshape(og_shape)
+
+    def forward(self, x):
+        """
+        Args:
+            x: torch tensor (B, H)
+        Returns:
+            fx: torch tensor (B, N*lang_size)
+        """
+        # dim is just a generalization for cases in which the
+        # consolidator is the identity function.
+        fx = self.consolidator(x.detach().data, dim=-1)
+        fx = self.out_fxn(fx)
+        return fx
 
 class NullModel(Model):
     def __init__(self, *args, **kwargs):
@@ -546,9 +727,15 @@ class TestModel(Model):
             return self.step(x)
         else:
             # Action
-            actn = torch.ones(*x.shape[:2], self.actn_size, requires_grad=True).float()
+            actn = torch.ones(
+                *x.shape[:2],
+                self.actn_size,
+                requires_grad=True).float()
             # Language
-            lang = torch.ones(*x.shape[:2], self.lang_size, requires_grad=True).float()
+            lang = torch.ones(
+                *x.shape[:2],
+                self.lang_size,
+                requires_grad=True).float()
             if x.is_cuda:
                 actn = actn.cuda()
                 lang = lang.cuda()
@@ -560,8 +747,12 @@ class TestModel(Model):
             x: torch Float Tensor (B, C, H, W)
         """
         x = x.reshape(len(x), -1)
-        actn = torch.ones((x.shape[0], self.actn_size), requires_grad=True).float()
-        lang = torch.ones((x.shape[0], self.lang_size), requires_grad=True).float()
+        actn = torch.ones(
+            (x.shape[0], self.actn_size),
+            requires_grad=True).float()
+        lang = torch.ones(
+            (x.shape[0], self.lang_size),
+            requires_grad=True).float()
         if x.is_cuda:
             actn = actn.cuda()
             lang = lang.cuda()
@@ -972,24 +1163,54 @@ class SymmetricLSTM(VaryLSTM):
         self.n_lstms = 3
         self.n_lang_denses = 1
 
-        # Make LSTMs
-        # the core LSTM is already created from the super class
+        consolidator_kwargs = {
+            "langactn_inpt_type": self.langactn_inpt_type,
+            "h_size": self.h_size,
+            "max_char_seq": self.max_char_seq,
+            "STOP": self.STOP,
+            "n_outlayers": self.n_outlayers,
+            "h_mult": self.h_mult,
+            "drop_p": self.drop_p,
+            "actv_fxn": self.actv_fxn,
+            "lnorm": self.lnorm,
+            "use_count_words": self.use_count_words,
+        }
+        # Make LSTMs and consolidators.
+        # The core LSTM is already created from the super class
         # under the name self.lstm
+        # The consolidators are either the identity function or they
+        # are a class that assists with processing the language and
+        # action inputs for the next timestep
         size = self.h_size
+        self.lang_consolidator = identity
         if self.incl_lang_inpt:
             if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
                 size = size + self.h_size
+                consolidator_kwargs["inpt_size"] = self.h_size
+            elif self.langactn_inpt_type == LANGACTN_TYPES.CONSOLIDATE:
+                raise NotImplemented
             else:
                 self.cat_lang_size = self.lang_size
                 if self.max_char_seq is not None:
                     mcs = self.max_char_seq
                     self.cat_lang_size = self.cat_lang_size*mcs
+                consolidator_kwargs["inpt_size"] = self.cat_lang_size
                 size = size + self.cat_lang_size
+            self.lang_consolidator = InptConsolidationModule(
+                **consolidator_kwargs
+            )
+        self.actn_consolidator = identity
         if self.incl_actn_inpt:
+            consolidator_kwargs["max_char_seq"] = 1
             if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
                 size = size + self.h_size
+                consolidator_kwargs["inpt_size"] = self.h_size
             else:
                 size += self.actn_size
+                consolidator_kwargs["inpt_size"] = self.actn_size
+            self.actn_consolidator = InptConsolidationModule(
+                **consolidator_kwargs
+            )
         if self.skip_lstm:
             # add additional h_size here for conditional input
             size = self.flat_size + self.h_size + size
@@ -1133,7 +1354,7 @@ class SymmetricLSTM(VaryLSTM):
 
         inpt = [h]
         if self.incl_actn_inpt:
-            inpt.append(self.actn)
+            inpt.append(self.actn_consolidator(self.actn))
         if self.incl_lang_inpt:
             if self.langactn_inpt_type != LANGACTN_TYPES.HVECTOR and\
                             self.lang.shape[-1] < self.cat_lang_size:
@@ -1153,22 +1374,11 @@ class SymmetricLSTM(VaryLSTM):
         lang = self.lang_denses[0](lang_h)
 
         if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
-            self.actn = actn_h.detach().data
-            self.lang = lang_h.detach().data
+            self.actn = self.actn_consolidator(actn_h)
+            self.lang = self.lang_consolidator(lang_h)
         else:
-            if self.langactn_inpt_type == LANGACTN_TYPES.SOFTMAX:
-                fxn = nn.functional.softmax
-            if self.langactn_inpt_type == LANGACTN_TYPES.ONEHOT:
-                fxn = max_one_hot
-            self.actn = fxn( actn.detach().data, dim=-1 )
-            self.lang = lang.detach().data
-            if self.max_char_seq is not None and self.max_char_seq>1:
-                og_shape = self.lang.shape
-                new_shape = (len(x), self.max_char_seq, self.lang_size)
-                self.lang = fxn( self.lang.reshape(new_shape), dim=-1 )
-                self.lang = self.lang.reshape(og_shape)
-            else:
-                self.lang = fxn(self.lang, dim=-1)
+            self.actn = self.actn_consolidator(actn)
+            self.lang = self.lang_consolidator(lang)
 
         self.hs = [h, actn_h, lang_h]
         self.cs = [c, actn_c, lang_c]
