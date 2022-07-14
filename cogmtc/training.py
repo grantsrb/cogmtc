@@ -905,7 +905,15 @@ def hyps_error_catching(hyps):
         if try_key(hyps,"drop_perc_threshold",0)!=0:
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
-        
+
+    # Convert to No-Language Variant
+    if hyps["use_count_words"]==-1:
+        hyps["use_count_words"] = 1
+        hyps["second_phase"] = 1
+        hyps["skip_first_phase"] = True
+        hyps["incl_lang_inpt"] = False
+        hyps["incl_actn_inpt"] = False
+
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]
     if try_key(hyps, "lang_targs_only", False) and\
