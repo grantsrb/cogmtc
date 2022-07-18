@@ -1707,9 +1707,6 @@ class DoubleLSTM(DoubleVaryLSTM):
                 ))
 
 class Transformer(Model):
-    """
-    A recurrent LSTM model.
-    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self.bnorm == False,\
@@ -1846,6 +1843,162 @@ class Transformer(Model):
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(encs).reshape(b,s,-1))
+        return self.output_fxn(actns), torch.stack(langs,dim=0)
+
+class SepTransformer(Model):
+    """
+    Same as transformer except that there are seperate encoding branches
+    for the language and action outputs off the main encoding layers.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert self.bnorm == False,\
+            "bnorm must be False. it does not work with Recurrence!"
+
+        # Convs
+        cnn = VaryCNN(*args, **kwargs)
+        self.shapes = cnn.shapes
+        self.features = cnn.features
+
+        # Linear Projection
+        self.flat_size = cnn.flat_size
+        self.proj = nn.Sequential(
+            Flatten(),
+            nn.Linear(self.flat_size, self.h_size)
+        )
+
+        # Transformer
+        self.pos_enc = PositionalEncoding(
+            self.h_size,
+            self.feat_drop_p
+        )
+        enc_layer = nn.TransformerEncoderLayer(
+            self.h_size,
+            self.n_heads,
+            3*self.h_size,
+            self.feat_drop_p,
+            norm_first=True,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(
+            enc_layer,
+            self.n_layers
+        )
+
+        self.lang_encoder = nn.TransformerEncoder( enc_layer, 1 )
+        self.actn_encoder = nn.TransformerEncoder( enc_layer, 1 )
+
+        self.make_actn_dense()
+        self.make_lang_denses()
+
+        # Memory
+        if self.lnorm:
+            self.actnnorm = nn.LayerNorm(self.h_size)
+            self.langnorm = nn.LayerNorm(self.h_size)
+        self.h = None
+        self.c = None
+        self.reset(batch_size=1)
+        max_seq_len = 128
+        self.register_buffer(
+            "fwd_mask",
+            get_transformer_fwd_mask(s=max_seq_len)
+        )
+
+    def reset(self, batch_size=1):
+        """
+        Resets the memory vectors
+
+        Args:
+            batch_size: int
+                the size of the incoming batches
+        Returns:
+            None
+        """
+        self.prev_hs = collections.deque(maxlen=self.seq_len)
+
+    def partial_reset(self, dones):
+        """
+        Uses the done signals to reset appropriate parts of the h and
+        c vectors.
+
+        Args:
+            dones: torch LongTensor (B,)
+                h and c are zeroed along any row in which dones[row]==1
+        Returns:
+            h: torch FloatTensor (B, H)
+            c: torch FloatTensor (B, H)
+        """
+        pass
+
+    def reset_to_step(self, step=0):
+        """
+        This function resets all recurrent states in a model to the
+        previous recurrent state just after the argued step. So, the
+        model takes the 0th step then the 0th h and c vectors are the
+        h and c vectors just after the model took this step.
+
+        Args:
+            step: int
+                the index of the step to revert the recurrence to
+        """
+        pass
+
+    def step(self, x, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor (B, L)
+        """
+        fx = self.features(x)
+        fx = self.proj(fx) # (B, H)
+        self.prev_hs.append(fx)
+        encs = torch.stack(list(self.prev_hs), dim=1)
+        encs = self.pos_enc(encs)
+        slen = encs.shape[1]
+        encs = self.encoder( encs, self.fwd_mask[:slen,:slen] )
+        actn_encs = self.actn_encoder(encs, self.fwd_mask[:slen,:slen])
+        lang_encs = self.lang_encoder(encs, self.fwd_mask[:slen,:slen])
+        if self.lnorm:
+            actn_encs = self.actnnorm(actn_encs[:,-1])
+            lang_encs = self.langnorm(lang_encs[:,-1])
+        langs = []
+        for dense in self.lang_denses:
+            langs.append(dense(lang_encs))
+        return self.output_fxn(self.actn_dense(actn_encs)), langs
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+            langs: torch FloatTensor (N,B,S,L)
+        """
+        seq_len = x.shape[1]
+        self.prev_hs = collections.deque(maxlen=self.seq_len)
+        b,s,c,h,w = x.shape
+        fx = self.features(x.reshape(-1,c,h,w)).reshape(b*s,-1)
+        fx = self.proj(fx).reshape(b,s,-1)
+        encs = self.pos_enc(fx)
+        encs = self.encoder( encs, self.fwd_mask[:s,:s] )
+        actn_encs = self.actn_encoder(encs, self.fwd_mask[:s,:s])
+        lang_encs = self.lang_encoder(encs, self.fwd_mask[:s,:s])
+        if self.lnorm:
+            actn_encs = self.actnnorm(actn_encs)
+            lang_encs = self.langnorm(lang_encs)
+
+        actn_encs = actn_encs.reshape(b*s,-1)
+        actns = self.actn_dense(actn_encs).reshape(b,s,-1)
+
+        lang_encs = lang_encs.reshape(b*s,-1)
+        langs = []
+        for dense in self.lang_denses:
+            langs.append(dense(lang_encs).reshape(b,s,-1))
         return self.output_fxn(actns), torch.stack(langs,dim=0)
 
 class ConditionalLSTM(CoreModule):
