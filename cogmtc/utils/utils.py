@@ -281,7 +281,7 @@ def get_piraha_labels(labels, n_items):
         labels[idx] = labs + 2
     return labels
 
-def get_duplicate_labels(labels, n_items, max_label):
+def get_duplicate_labels(labels, n_items, max_targ, null_label):
     """
     Converts the number of items that exist in the game (not
     including the targets) to a count word that is interchangeable
@@ -296,30 +296,27 @@ def get_duplicate_labels(labels, n_items, max_label):
             works just fine)
         n_items: torch Tensor (...,N)
             the count of the items on the board
-        max_label: int
-            the maximum available label. must be even so that we can
-            stride 2 steps in labels for each step in n_items values.
-            Then we equally distribute both labels amongst the n_items
-            entries equal to the corresponding value
+        max_targ: int
+            the maximum value to label. 
     Returns:
         labels: torch LongTensor
             the updated labels. operates in place 
     """
     rand_vals = torch.randint(0,2,labels.shape)
-    for i in range(0,max_label,2):
-        val = i//2
-        if i == max_label-2:
-            idx = n_items>=val
-        else:
-            idx = n_items==val
+    for i in range(0,max_targ*2+1,2):
+        idx = n_items==(i//2)
         labels[idx] = i+rand_vals[idx]
+    if null_label is None: null_label = (max_targ+1)*2+1
+    labels[n_items>max_targ] = null_label
     return labels
 
 def get_lang_labels(n_items,
                     n_targs,
-                    max_label,
+                    max_targ,
                     use_count_words,
-                    max_char_seq=1):
+                    max_char_seq=1,
+                    base=4,
+                    null_label=None):
     """
     Determines the language labels based on the type of training.
 
@@ -328,15 +325,19 @@ def get_lang_labels(n_items,
             the count of the items on the board
         n_targs: torch Tensor (N,)
             the count of the targs on the board
-        max_label: int
-            the maximum allowed language label. can usually use
-            model.lang_size-1. Assumes max_label-1 is the base of the
-            positional number system when use_count_words is 5
+        max_targ: int
+            the inclusive maximum allowed target value to be included in
+            language. can usually use hyps["lang_range"][-1]
         use_count_words: int
             the type of language that the model is using
         max_char_seq: int
             the longest character sequence that the model will ever
             predict. Only matters when use_count_words is 5
+        base: int
+            the base of the number system if using NUMERAL models
+        null_label: int or None
+            if none, takes the value of 1+greatest possible label for
+            use_count_words type
     Returns:
         labels: torch Tensor (N,) or (N,M)
             returns tensor of shape (N,M) when use_count_words is 5
@@ -344,12 +345,24 @@ def get_lang_labels(n_items,
     labels = n_items.clone()
     # positional numeral system
     if int(use_count_words) == 5:
-        base = max_label # max_label is STOP token
+        if null_label is None: null_label = base+2
         mcs = max_char_seq
         labels = get_numeral_labels(labels, base, mcs)
+        null = torch.zeros_like(labels[0])
+        null[0] = null_label # null label
+        null[1] = base # stop label
+        idx = n_items.reshape(-1)>max_targ
+        if torch.any(idx):
+            og_shape = labels.shape
+            labels = labels.reshape(-1, mcs)
+            labels[idx] = null
+            labels = labels.reshape(og_shape)
         return labels
-    labels[labels>max_label] = max_label
-    if int(use_count_words) == 0:
+
+    if int(use_count_words) == 1:
+        if null_label is None: null_label = max_targ+1
+        labels[n_items>max_targ] = null_label
+    elif int(use_count_words) == 0:
         labels[n_items<n_targs] = 0
         labels[n_items==n_targs] = 1
         labels[n_items>n_targs] = 2
@@ -358,11 +371,12 @@ def get_lang_labels(n_items,
         labels = get_piraha_labels(labels, n_items)
     # Random labels
     elif int(use_count_words) == 3:
-        labels = torch.randint(0, max_label+1, labels.shape)
+        labels = torch.randint(0, max_targ+1, labels.shape)
         if n_items.is_cuda: labels = labels.to(DEVICE)
     # Duplicate labels
     elif int(use_count_words) == 4:
-        labels = get_duplicate_labels(labels, n_items, max_label)
+        if null_label is None: null_label = max_targ+1
+        labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
     return labels
 
 def get_numeral_labels(n_items,numeral_base=4,char_seq_len=4):
@@ -518,11 +532,11 @@ def get_loss_and_accs(phase,
                       drops,
                       n_targs,
                       n_items,
+                      use_count_words,
                       prepender="",
                       loss_fxn=F.cross_entropy,
                       lang_p=0.5,
-                      base=None,
-                      max_char_seq=None,
+                      lang_size=None,
                       null_alpha=0.1):
     """
     Calculates the loss and accuracies depending on the phase of
@@ -555,16 +569,16 @@ def get_loss_and_accs(phase,
         loss_fxn: torch Module
             the loss function to calculate the loss. i.e.
             torch.nn.CrossEntropyLoss()
+        use_count_words: int
+            the type of language training
         prepender: str
             a string to prepend to all keys in the accs dict
         lang_p: float
             the language portion of the loss. only a factor for phase
             2 trainings
-        base: int or None
-            if using numeral system, this is the numeral base
-        max_char_seq: int or None
-            if using numeral system, this is the maximum number of
-            prediction that the language model makes per time step
+        lang_size: int or None
+            only matters if using numeral system, this is the number
+            of potential language classes
         null_alpha: float
             a hyperparameter to adjust how much weight should be placed
             on producing zeros for the base numeral system outputs
@@ -601,8 +615,8 @@ def get_loss_and_accs(phase,
             drops, # determines what timesteps to train language
             categories=n_items,
             prepender=prepender,
-            base=base,
-            max_char_seq=max_char_seq,
+            lang_size=lang_size,
+            use_count_words=use_count_words,
             null_alpha=null_alpha
         )
     actn_accs = {}
@@ -659,8 +673,8 @@ def calc_lang_loss_and_accs(preds,
                             labels,
                             drops,
                             categories,
-                            base=None,
-                            max_char_seq=None,
+                            lang_size=None,
+                            use_count_words=None,
                             prepender="",
                             null_alpha=0.1):
     """
@@ -680,12 +694,10 @@ def calc_lang_loss_and_accs(preds,
         categories: torch long tensor (B*S,) or None
             if None, this value is ignored. Otherwise it specifies
             categories for accuracy calculations.
-        base: int or None
-            if using numeral system, this is the numeral base. argue
-            None if using one-hot system
-        max_char_seq: int or None
-            if using numeral system, this is the number of numeral
-            predictions contained within L (the preds last dim)
+        lang_size: int or None
+            only applies if using numeral system, this is the number
+            of potential prediction classes. argue None if using
+            one-hot system
         prepender: str
             a string to prepend to all keys in the accs dict
         null_alpha: float
@@ -716,13 +728,14 @@ def calc_lang_loss_and_accs(preds,
         drops = drops.repeat_interleave(n)
         categories = categories.repeat_interleave(n)
     idxs = (drops==1)&(labels>=0)
-    if base is not None: null_idxs = (drops==1)&(labels<0)
+    null_idxs = None
+    if use_count_words==5: null_idxs = (drops==1)&(labels<0)
     categories = categories[idxs]
     labels = labels[idxs].to(DEVICE)
     loss = 0
     for j,lang in enumerate(preds):
-        if base is not None:
-            lang = lang.reshape(-1, base+1)
+        if null_idxs is not None:
+            lang = lang.reshape(-1, lang_size)
             if null_alpha > 0:
                 nulls = lang[null_idxs]
                 null_loss = F.mse_loss(nulls, torch.zeros_like(nulls))

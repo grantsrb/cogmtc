@@ -474,10 +474,10 @@ class Trainer:
                 n_items=n_items,
                 prepender="train",
                 lang_p=self.hyps["lang_p"],
-                # this is set to None if not using NUMERAL system
-                base=self.hyps["numeral_base"],
-                # this is set to None if not using NUMERAL system
-                max_char_seq=self.hyps["max_char_seq"],
+                # this only matters if using NUMERAL system
+                lang_size=self.hyps["lang_size"],
+                # this only matters if using NUMERAL system
+                use_count_words=self.hyps["use_count_words"],
                 null_alpha=try_key(self.hyps, "null_alpha", 0.1)
             )
             # Backprop and update

@@ -229,9 +229,11 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
             self.exp["n_targs"],
-            max_label=self.hyps["lang_size"]-1,
+            max_targ=self.hyps["max_lang_targ"],
             use_count_words=self.hyps["use_count_words"],
-            max_char_seq=self.hyps["max_char_seq"]
+            max_char_seq=self.hyps["max_char_seq"],
+            base=self.hyps["numeral_base"],
+            null_label=self.hyps["null_label"]
         )
         if try_key(self.hyps, "pre_grab_count", False) == True:
             self.exp["lang_labels"] = describe_then_prescribe(
@@ -629,8 +631,18 @@ class DataCollector:
         if self.hyps["lang_range"] is None:
             self.hyps["lang_range"] = self.hyps["targ_range"]
         lang_range = self.hyps["lang_range"]
-        self.hyps["lang_size"] = lang_range[1]+1 # plus one includes zero
+        max_targ = max(
+            lang_range[-1],
+            self.hyps["targ_range"][-1],
+            self.hyps["val_targ_range"][-1]
+        )
+        ms = math.prod(self.obs_shape)/(self.hyps["pixel_density"]**2)
+        self.hyps["max_steps"] = ms*(max_targ+1)
+
         self.hyps["max_char_seq"] = 1
+        # Extra space for Null is included after ifelse statement
+        self.hyps["max_lang_targ"] = lang_range[1]
+        self.hyps["lang_size"] = lang_range[1]+1 # plus one includes zero
         # If comparison or piraha language, must change lang_size
         if int(self.hyps["use_count_words"]) == INEQUALITY:
             self.hyps["lang_size"] = 3
@@ -654,8 +666,14 @@ class DataCollector:
             self.hyps["numeral_base"] = None
             self.hyps["max_char_seq"] = None
             self.hyps["lstm_lang"] = None
+        self.hyps["null_label"] = self.hyps["lang_size"]
+        self.hyps["lang_size"] += 1 # For NULL prediction
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
         self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
+        self.validator.hyps["max_lang_targ"] = self.hyps["max_lang_targ"]
+        self.validator.hyps["null_label"] = self.hyps["null_label"]
+        self.validator.hyps["lang_size"] = self.hyps["lang_size"]
+        self.validator.hyps["max_steps"] = self.hyps["max_steps"]
         # Initialize Experience Replay
         self.exp_replay = ExperienceReplay(hyps)
         print("exp_replay created")
@@ -1211,12 +1229,15 @@ class ValidationRunner(Runner):
                 idx = data["dones"]==1
                 acc = (data["n_items"][idx] == n_targs).float().mean()
                 avg_acc += acc.item()
+
                 lang_labels = get_lang_labels(
                     data["n_items"],
                     data["n_targs"],
-                    max_label=model.lang_size-1,
+                    max_targ=self.hyps["max_lang_targ"],
                     use_count_words=self.hyps["use_count_words"],
-                    max_char_seq=self.hyps["max_char_seq"]
+                    max_char_seq=self.hyps["max_char_seq"],
+                    base=self.hyps["numeral_base"],
+                    null_label=self.hyps["null_label"]
                 )
                 if try_key(self.hyps, "pre_grab_count", False):
                     lang_labels = describe_then_prescribe(
@@ -1240,7 +1261,7 @@ class ValidationRunner(Runner):
                     self.phase,
                     n_targs,
                     env_type,
-                    base=self.hyps["numeral_base"],
+                    lang_size=self.hyps["lang_size"],
                     max_char_seq=self.hyps["max_char_seq"],
                     null_alpha=try_key(self.hyps,"null_alpha",0.1)
                 )
@@ -1249,7 +1270,7 @@ class ValidationRunner(Runner):
                 avg = data["lang_preds"].mean(0)
                 if self.hyps["use_count_words"]==NUMERAL:
                     base = self.hyps["numeral_base"]
-                    lang = avg.reshape(len(avg), -1, base+1)
+                    lang = avg.reshape(len(avg), -1, self.hyps["lang_size"])
                     lang = torch.argmax(lang, dim=-1) # (N,C)
                     lang = convert_numeral_array_to_numbers(
                         lang.detach().cpu(), base=base
@@ -1395,7 +1416,7 @@ class ValidationRunner(Runner):
                         phase,
                         n_targs,
                         env_type,
-                        base=None,
+                        lang_size=None,
                         max_char_seq=None,
                         null_alpha=0.1,
                         save_name="epoch_stats.csv"):
@@ -1437,8 +1458,8 @@ class ValidationRunner(Runner):
                 n_items=data["n_items"],
                 prepender="",
                 loss_fxn=self.loss_fxn,
-                base=base,
-                max_char_seq=max_char_seq,
+                lang_size=lang_size,
+                use_count_words=self.hyps["use_count_words"],
                 null_alpha=null_alpha
             )
             s = ""
@@ -1610,11 +1631,14 @@ class ValidationRunner(Runner):
                     "-- N_Targs:", info["n_targs"],
                     "-- N_Items:", info["n_items"]
                 )
+
                 lang_targ = get_lang_labels(
                     torch.LongTensor([info["n_items"]]),
                     torch.LongTensor([info["n_targs"]]),
-                    max_label=model.lang_size-1,
-                    use_count_words=self.hyps["use_count_words"]
+                    max_targ=self.hyps["max_lang_targ"],
+                    use_count_words=self.hyps["use_count_words"],
+                    base=self.hyps["numeral_base"],
+                    null_label=self.hyps["null_label"]
                 ).item()
                 print( "Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
