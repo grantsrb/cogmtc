@@ -1218,7 +1218,7 @@ class ValidationRunner(Runner):
             self.hyps["targ_range"][1]+1
         )
         if self.hyps["exp_name"] == "test":
-            rainj = range(2,3)
+            rainj = range(2,6)
         self.hyps["seed"] = self.seed
         avg_acc = 0
         avg_loss = 0
