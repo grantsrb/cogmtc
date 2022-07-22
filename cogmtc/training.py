@@ -95,6 +95,7 @@ def train(rank, hyps, verbose=True):
     # Update phase accross training
     trainer.phase = hyps["second_phase"]
     data_collector.await_runners()
+    data_collector.exp_replay.clear_experience()
     data_collector.update_phase(trainer.phase)
     data_collector.dispatch_runners()
     # Fresh optimizer
@@ -389,6 +390,8 @@ class Trainer:
             n_items = data["n_items"]
             n_targs = data["n_targs"]
             labels = data["lang_labels"]
+            tasks = data["tasks"]
+            masks = data["masks"]
 
             if self.phase == 0 and try_key(self.hyps,"blind_lang",False):
                 obs = torch.zeros_like(obs)
@@ -439,6 +442,8 @@ class Trainer:
                         print("labels:", labels[row,ii].cpu().numpy())
                         print("actns:", actns[row,ii].cpu().numpy())
                         print("isanim:", data["is_animating"][row,ii].cpu().numpy())
+                        print("masks:", masks[row,ii].cpu().numpy())
+                        print("tasks:", tasks[row,ii].cpu().numpy())
                         print()
                         time.sleep(1)
                         #plt.imshow(o.transpose((1,2,0)).squeeze())
@@ -453,13 +458,17 @@ class Trainer:
                 with torch.no_grad():
                     logits, langs = model(
                         obs.to(DEVICE),
-                        dones.to(DEVICE)
+                        dones=dones.to(DEVICE),
+                        tasks=tasks.to(DEVICE),
+                        masks=masks.to(DEVICE)
                     )
                 continue
             # model uses dones if it is recurrent
             logits, langs = model(
                 obs.to(DEVICE),
-                dones.to(DEVICE)
+                dones=dones.to(DEVICE),
+                tasks=tasks.to(DEVICE),
+                masks=masks.to(DEVICE)
             )
 
             loss, losses, accs = get_loss_and_accs(
@@ -937,7 +946,7 @@ def hyps_error_catching(hyps):
         )
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
-    
+
     if "incl_lang_inpts" in hyps and "incl_lang_inpt" not in hyps:
         hyps["incl_lang_inpt"] = hyps["incl_lang_inpts"]
         print("Fixing plural mistake, incl_lang_inpts to incl_lang_inpt")
@@ -950,6 +959,4 @@ def hyps_error_catching(hyps):
     if "lstm_actn_inpt" in hyps and "incl_actn_inpt" not in hyps:
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
-
-
 

@@ -15,10 +15,10 @@ $ python3 record_model.py exp_name/model_folder/
 
 """
 
-n_episodes = 2 # Set this to longer to get more unique game xp
+n_episodes = 1 # Set this to longer to get more unique game xp
 repeat = 6 # Set this to longer to linger on images longer
 fps = 2
-targ_range = (1,5)
+targ_range = (1,5) # max not inclusive
 
 if __name__ == "__main__":
     if not os.path.exists("./vids/"): os.mkdir("vids/")
@@ -41,9 +41,17 @@ if __name__ == "__main__":
 
     env_type = hyps["env_types"][0]
     val_runner.oracle = val_runner.oracles[env_type]
-    data = val_runner.collect_data(
-        model, n_targs=None, env_type=env_type
-    )
+    all_data = None
+    for n_targs in range(*targ_range):
+        model.reset()
+        data = val_runner.collect_data(
+            model, n_targs=None, env_type=env_type
+        )
+        if all_data is None:
+            all_data = data
+        else:
+            all_data["states"] = np.concatenate([all_data["states"], data["states"]], axis=0)
+    data = all_data
     torch.cuda.empty_cache()
 
     frames = np.asarray(data["states"])
