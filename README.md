@@ -313,6 +313,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "grid_size": list of ints (height, width)
         the number of units (height, width) of the game. Only applies
         to gordongames variants
+    "rand_pdb": bool
+        if true, the player, dispenser, and ending button are randomly
+        placed along the top row of the grid at the beginning of each
+        episode. If false, they are evenly spaced along the top row
+        in the following order player, dispenser, ending button.
     "targ_range": list of ints (low, high)
         the range of potential target counts. This acts as the default
         if lang_range or actn_range are not specified. both low and
@@ -362,6 +367,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the "experience" length for a single rollout. This is the
         number of steps to take in the environment for a single row
         in the batch during data collection.
+    "max_steps": int or None
+        optional argument, if argued, determines the maximum number of
+        steps that an episode can take. Be careful to make completion
+        of an episode possible within the argued number of steps!
     "max_ctx_len": null or int
         if you would like to increase the context length for trainings
         using the transformer class without increasing the back-

@@ -51,6 +51,7 @@ word_set = set(sent.split(" "))
 CDTNL_LANG_SIZE = len(word_set)+1
 word2idx = {"null": 0, **{k:i+1 for i,k in enumerate(word_set)}}
 idx2word = {0: "null", **{i+1:k for i,k in enumerate(word_set)}}
+
 IDX_CONDITIONALS = {
  k: [word2idx[w] for w in v.split(" ")] for k,v in CONDITIONALS.items()
 }

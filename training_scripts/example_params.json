@@ -66,6 +66,7 @@
     "harsh": true,
     "pixel_density": 3,
     "grid_size": [ 15, 15 ],
+    "rand_pdb": false,
     "targ_range": [ 1, 10 ],
     "lang_range": null,
     "actn_range": null,

@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 import numpy as np
-from cogmtc.models import NullModel
+import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up
@@ -89,8 +89,8 @@ class ExperienceReplay(torch.utils.data.Dataset):
             hyps: dict
                 exp_len: int
                     the maximum length of the experience tensors
-                batch_size: int
-                    the number of parallel environments
+                collection_size: int
+                    the number of parallel rollouts to collect
                 inpt_shape: tuple (C, H, W)
                     the shape of the observations. channels first,
                     then height and width
@@ -139,10 +139,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
                         gordongames environment
         """
         self.hyps = hyps
-        self.exp_len = self.hyps["exp_len"]
-        self.batch_size = self.hyps["batch_size"]
+        # If model is transformer type, collection_size and exp_len
+        # have already been changed in the datacollector to ensure
+        # appropriate data collection shape
+        self.exp_len    = self.hyps["exp_len"]
+        self.csize = self.hyps["collection_size"]
+        self.bsize = self.hyps["batch_size"]
         self.inpt_shape = self.hyps["inpt_shape"]
-        self.seq_len = self.hyps["seq_len"]
+        self.seq_len    = self.hyps["seq_len"]
         self.randomize_order = self.hyps["randomize_order"]
 
         # Hold outs are used in the get_drops function as a way
@@ -157,30 +161,38 @@ class ExperienceReplay(torch.utils.data.Dataset):
 
         self.roll_data = try_key(self.hyps, "roll_data", True)
         self.share_tensors = share_tensors
-        assert self.exp_len > self.seq_len,\
+        assert self.exp_len >= self.seq_len,\
             "sequence length must be less than total experience length"
         self.shared_exp = {
             "obs": torch.zeros((
-                    self.batch_size,
+                    self.csize,
                     self.exp_len,
                     *self.inpt_shape
                 )).float(),
             "rews": torch.zeros((
-                    self.batch_size,
+                    self.csize,
                     self.exp_len
                 )).float(),
             "dones": torch.zeros((
-                    self.batch_size,
+                    self.csize,
                     self.exp_len
                 )).long(),
             "actns": torch.zeros((
-                    self.batch_size,
+                    self.csize,
+                    self.exp_len
+                )).long(),
+            "masks": torch.ones((
+                    self.csize,
+                    self.exp_len
+                )).long(),
+            "tasks": torch.zeros((
+                    self.csize,
                     self.exp_len
                 )).long(),
         }
         if self.hyps["continuous_env"]:
             self.shared_exp["actns"] = torch.zeros((
-                        self.batch_size,
+                        self.csize,
                         self.exp_len,
                         self.hyps["actn_size"]
                     )).float()
@@ -190,7 +202,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
         ]
         for key in self.info_keys:
             self.shared_exp[key] = torch.zeros((
-                self.batch_size,
+                self.csize,
                 self.exp_len
             )).long()
         if self.share_tensors:
@@ -215,16 +227,12 @@ class ExperienceReplay(torch.utils.data.Dataset):
           k: v.detach().data.clone() for k,v in self.shared_exp.items()
         }
         if self.hyps["blind_lang"] and phase == 0:
-            count_list = torch.arange(self.hyps["lang_range"][1])
+            count_list = torch.arange(self.hyps["lang_range"][1]+1)
             l = self.exp["n_items"].shape[-1]
             n = l//len(count_list)+1
             b = len(self.exp["n_items"])
             count_list = count_list[None].repeat((b,n))
             self.exp["n_items"][:] = count_list[:,:l]
-            #zeros = torch.zeros_like(count_list)
-            #for i in range(b):
-            #    if i > 0: self.exp["n_items"][i,:i] = zeros[:i]
-            #    self.exp["n_items"][i,i:] = count_list[:l-i]
 
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
@@ -235,19 +243,28 @@ class ExperienceReplay(torch.utils.data.Dataset):
             base=self.hyps["numeral_base"],
             null_label=self.hyps["null_label"]
         )
-        if try_key(self.hyps, "pre_grab_count", False) == True:
+        if try_key(self.hyps, "pre_grab_count", False):
             self.exp["lang_labels"] = describe_then_prescribe(
                 self.exp["lang_labels"],
                 self.exp["is_animating"]|self.exp["dones"]
             )
+        self.clear_experience()
         return self.exp
 
+    def clear_experience(self):
+        """
+        For any shared tensors that need to be reset after each data
+        collection phase, reset them here.
+        """
+        # Reset masks to ones
+        self.shared_exp["masks"][:, :] = 1
+
     def __len__(self):
-        raw_len = len(self.shared_exp["rews"][0]) - self.seq_len + 1
-        #raw_len = len(self.shared_exp["rews"][0])
+        n_batches = self.csize//self.bsize
         if self.roll_data:
-            return raw_len
-        return int(raw_len//self.seq_len)
+            raw_len = self.exp_len - self.seq_len + 1
+            return raw_len*n_batches
+        return int(self.exp_len//self.seq_len)*n_batches
 
     def __getitem__(self, idx):
         """
@@ -265,12 +282,25 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     rews: torch float tensor (N, S)
                     dones: torch long tensor (N, S)
                     actns: torch long tensor (N, S)
+                    masks: torch long tensor (N, S)
+                        zeros denote used spaces, ones denote padding
+                    tasks: torch long tensor (N, S)
         """
+        raw_len = self.exp_len - self.seq_len + 1
         if not self.roll_data:
             idx = idx*self.seq_len
+            raw_len = self.exp_len
+
+        bstartx = int(idx/raw_len)*self.bsize
+        bendx  = bstartx+self.bsize
+
+        startx = idx-int(idx/raw_len)*raw_len
+        endx   = startx+self.seq_len
+
         data = dict()
         for key in self.exp.keys():
-            data[key] = self.exp[key][:, idx: idx+self.seq_len]
+            data[key] = self.exp[key][bstartx:bendx, startx:endx]
+
         data["drops"] = self.get_drops(
             self.hyps,
             data["n_items"],
@@ -304,6 +334,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     rews: torch float tensor (N, S)
                     dones: torch long tensor (N, S)
                     actns: torch long tensor (N, S)
+                    masks: torch long tensor (N, S)
+                        zeros denote used spaces, ones denote padding
+                    tasks: torch long tensor (N, S)
         """
         if not hasattr(self, "idx_order"):
             self.__iter__()
@@ -313,71 +346,6 @@ class ExperienceReplay(torch.utils.data.Dataset):
             return self.__getitem__(idx)
         else:
             raise StopIteration
-
-    #@staticmethod
-    #def get_drops(hyps, grabs, is_animating, dones):
-    #    """
-    #    Returns a tensor denoting steps in which the agent dropped an
-    #    item. This always means that the player is still on the item
-    #    when the prediction happens.
-    #    
-    #    WARNING: the returned tensor has been bastardized to simply
-    #    denote when the agent should make a language prediction about
-    #    n_items.
-
-    #    The tensor returned is also actually a LongTensor, not a Bool
-    #    Tensor. Assumes 1 means PILE, and 2 means BUTTON and 3 means
-    #    ITEM within the grabs tensor.
-
-    #    For variants 4 and 7, drops includes any frame in which the
-    #    targets are displayed.
-
-    #    Args:
-    #        hyps: dict
-    #            the hyperparameters
-    #            langall: bool
-    #            count_targs: bool
-    #            drops_perc_threshold: float
-    #            lang_targs_only: int
-    #                if 0, does nothing. If 1, will only return drops
-    #                where is_animating is true. This argument is
-    #                overridden by langall being true.
-    #                count_targs is overridden by this argument.
-    #        grabs: Long Tensor (B,N)
-    #            a tensor denoting the item grabbed by the agent at
-    #            each timestep. Assumes 1 means PILE, and 2 means BUTTON
-    #            and 3 means ITEM
-    #        is_animating: torch LongTensor (..., N)
-    #            0s denote the environment was not displaying the targets
-    #            anymore. 1s denote the targets were displayed
-    #        dones: torch LongTensor (..., N)
-    #            1 denotes the end of an episode. Should occur one time
-    #            step after the agent presses the ending button.
-    #    Returns:
-    #        drops: Long Tensor (B,N)
-    #            a tensor denoting if the agent dropped an item with a 1,
-    #            0 otherwise. See WARNING in description
-    #    """
-    #    if type(grabs) == type(np.asarray([])):
-    #        grabs = torch.from_numpy(grabs).long()
-
-    #    if try_key(hyps, "langall", False):
-    #        drops = torch.ones_like(grabs)
-    #    elif try_key(hyps, "lang_targs_only", 0) == 1:
-    #        drops = is_animating.clone()
-    #    else:
-    #        block = len(grabs)//len(hyps["env_types"])
-    #        drops = torch.zeros_like(grabs).long()
-    #        for i,env_type in enumerate(hyps["env_types"]):
-    #            temp = {**hyps, "env_type": env_type}
-    #            fxn = ExperienceReplay.get_drops_helper
-    #            drops[i*block:(i+1)*block] = fxn(
-    #                temp,
-    #                grabs[i*block:(i+1)*block],
-    #                is_animating[i*block:(i+1)*block],
-    #                dones[i*block:(i+1)*block]
-    #            )
-    #    return drops
 
     @staticmethod
     def get_drops(hyps, n_items, is_animating, dones):
@@ -449,82 +417,6 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 )
         return drops
 
-    #@staticmethod
-    #def get_drops_helper(hyps, grabs, is_animating, dones):
-    #    """
-    #    Assists the get_drops function.
-
-    #    Args:
-    #        hyps: dict
-    #            the hyperparameters
-    #            langall: bool
-    #            count_targs: bool
-    #            drops_perc_threshold: float
-    #            lang_targs_only: int
-    #                if 0, does nothing. If 1, will only return drops
-    #                where is_animating is true. This argument is
-    #                overridden by langall being true.
-    #                count_targs is overridden by this argument.
-    #        grabs: Long Tensor (B,N)
-    #            a tensor denoting the item grabbed by the agent at
-    #            each timestep. Assumes 1 means PILE, and 2 means BUTTON
-    #            and 3 means ITEM
-    #        is_animating: torch LongTensor (..., N)
-    #            0s denote the environment was not displaying the targets
-    #            anymore. 1s denote the targets were displayed
-    #        dones: torch LongTensor (..., N)
-    #            1 denotes the end of an episode. Should occur one time
-    #            step after the agent presses the ending button.
-    #    Returns:
-    #        drops: Long Tensor (B,N)
-    #            a tensor denoting if the agent dropped an item with a 1,
-    #            0 otherwise. See WARNING in description
-    #    """
-    #    drops = grabs.clone().long()
-    #    if hyps["env_type"] in {"gordongames-v4", "gordongames-v8"}:
-    #        drops[drops>0] = 1
-    #        
-    #        if len(drops.shape) == 2:
-    #            twos = torch.zeros((drops.shape[0],drops.shape[1]+1))
-    #            if drops.is_cuda: twos = twos.cuda()
-    #            twos[:,1:] = drops+1
-    #            drops[(drops+twos[:,:-1])==2] = 1
-    #        elif len(drops.shape) == 1:
-    #            twos = torch.zeros(drops.shape[0]+1)
-    #            if drops.is_cuda: twos = twos.cuda()
-    #            twos[1:] = drops+1
-    #            drops[(drops+twos[:-1])==2] = 1
-    #        if try_key(hyps, "count_targs", True):
-    #            drops = drops | (is_animating>0)
-    #        return drops
-    #    drops[grabs!=3] = 0
-    #    drops[grabs==3] = 1
-    #    # Looks for situations where the sum drops off to 0
-    #    if len(grabs.shape)==2:
-    #        drops[:, 1:] = drops[:, :-1] - drops[:, 1:]
-    #        drops[:,0] = 0
-    #        drops = torch.roll(drops, 1, -1)
-    #        drops[:,0] = 0
-    #    elif len(grabs.shape)==1:
-    #        drops[1:] = drops[:-1] - drops[1:]
-    #        drops[0] = 0
-    #        drops = torch.roll(drops, 1, -1)
-    #        drops[0] = 0
-    #    drops[drops!=1] = 0
-    #    drops[drops>0] = 1
-    #    if try_key(hyps, "count_targs", True):
-    #        drops = drops | (is_animating>0)
-    #    # In case less than 5% of the batch are drops, we set the last
-    #    # column to 1
-    #    perc_threshold = try_key(hyps,"drops_perc_threshold",0)
-    #    if drops.sum()<=(perc_threshold*drops.numel()):
-    #        if perc_threshold == 0: perc_threshold = 0.1
-    #        rand = torch.rand_like(drops.float())
-    #        rand[rand<=perc_threshold] = 1
-    #        rand[rand!=1] = 0
-    #        drops = drops | rand.long()
-    #    return drops
-
     @staticmethod
     def get_drops_helper(n_items,
                          is_animating,
@@ -583,15 +475,34 @@ class DataCollector:
         Args:
             hyps: dict
                 keys: str
+                    exp_len: int
+                        the length of data collection for each row
+                        in the data
                     batch_size: int
-                        the number of parallel environments
+                        the size of the collection dimension for the
+                        collected data
                     env_types: int
                         the number of runners to instantiate
         """
         self.n_envs = len(hyps["env_types"])
         hyps["batch_size"]=(hyps["batch_size"]//self.n_envs)*self.n_envs
+        hyps["env2idx"] = {k:i for i,k in enumerate(hyps["env_types"])}
+    
         self.hyps = hyps
-        self.batch_size = self.hyps['batch_size']
+
+        # Handle data sizes differently if Transformer model type
+        mtype = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
+        if mtype == models.MODEL_TYPES.TRANSFORMER:
+            exp_len = self.hyps["exp_len"]
+            seq_len = self.hyps["seq_len"]
+            bsize   = self.hyps["batch_size"]
+            csize   = int(min(exp_len*bsize, 20000)//seq_len)*seq_len
+            self.hyps["collection_size"] = csize
+            self.hyps["exp_len"] = self.hyps["seq_len"]
+            self.hyps["roll_data"] = False
+        else:
+            self.hyps["collection_size"] = self.hyps["batch_size"]
+
         # Create gating mechanisms
         self.gate_q = mp.Queue(self.n_envs)
         self.stop_q = mp.Queue(self.n_envs)
@@ -637,7 +548,10 @@ class DataCollector:
             self.hyps["val_targ_range"][-1]
         )
         ms = math.prod(self.obs_shape)/(self.hyps["pixel_density"]**2)
-        self.hyps["max_steps"] = ms*(max_targ+1)
+        self.hyps["max_steps"] = try_key(self.hyps, "max_steps", None)
+        if self.hyps["max_steps"] is None or self.hyps["max_steps"]<=0:
+            self.hyps["max_steps"] = ms*(max_targ+1)
+        print("Max Steps:", self.hyps["max_steps"])
 
         self.hyps["max_char_seq"] = 1
         # Extra space for Null is included after ifelse statement
@@ -821,6 +735,12 @@ class Runner:
                              timestep t
                     "actns": Collects actions performed at each
                              timestep t
+                    "masks": Collects a mask determining whether or not
+                             a timestep t occurred or not. Only used
+                             for transformer model variants
+                            zeros denote used spaces, ones denote padding
+                    "tasks": Collects integers describing the task
+                             performed at each timestep t
                     "n_targs": Collects the number of targets for the
                                episode if using gordongames variant
                     "n_items": Collects the number of items over the
@@ -853,7 +773,6 @@ class Runner:
         self.phase_q = phase_q
         self.terminate_q = terminate_q
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
-        env_type = self.hyps['env_type']
         self.oracle = get_oracle(**self.hyps)
         self.rand = np.random.default_rng(self.hyps["seed"])
 
@@ -916,8 +835,8 @@ class Runner:
         self.phase = try_key(self.hyps, "first_phase", 0)
         self.model = model
         if model is None:
-            self.model = NullModel(**self.hyps)
-        bsize = self.hyps["batch_size"]
+            self.model = models.NullModel(**self.hyps)
+        csize = self.hyps["collection_size"]
         n_envs = len(self.hyps["env_types"])
         state = self.create_new_env()
         self.ep_rew = 0
@@ -953,9 +872,9 @@ class Runner:
                         self.phase = phase
                         state = self.create_new_env()
                     # Collect rollouts
-                    for i in range(bsize//n_envs):
-                        idx = self.idx*(bsize//n_envs) + i
-                        if idx < bsize:
+                    for i in range(csize//n_envs):
+                        idx = self.idx*(csize//n_envs) + i
+                        if idx < csize:
                             self.rollout(idx, self.model)
                     # Signals to main process that data has been collected
                     self.stop_q.put(self.idx)
@@ -986,9 +905,11 @@ class Runner:
             state = self.state_bookmark
             self.handle_model_bookmark(model)
         exp_len = self.hyps['exp_len']
-        with torch.no_grad():
-            idxs = model.cdtnl_idxs[self.idx][None]
-            cdtnl = model.cdtnl_lstm(idxs)
+        task = self.hyps["env2idx"][self.env.env_type]
+        if model.trn_whls<1:
+            with torch.no_grad():
+                idxs = model.cdtnl_idxs[task][None]
+                cdtnl = model.cdtnl_lstm(idxs)
         for i in range(exp_len):
             # Collect the state of the environment
             t_state = torch.FloatTensor(state) # (C, H, W)
@@ -1010,12 +931,17 @@ class Runner:
             self.shared_exp['rews'][idx,i] = rew
             self.shared_exp['dones'][idx,i] = float(done)
             self.shared_exp['actns'][idx,i] = actn_targ
+            m = self.shared_exp['masks'][idx,i].item()
+            if m != 1: print("mask was not reset", self.idx, idx)
+            self.shared_exp['masks'][idx,i] = 0
+            self.shared_exp['tasks'][idx,i] = task
             self.shared_exp["n_items"][idx,i] = info["n_items"]
             self.shared_exp["n_targs"][idx,i] = info["n_targs"]
             self.shared_exp["n_aligned"][idx,i] = info["n_aligned"]
             self.shared_exp["grabs"][idx,i] = int(info["grab"])
-            self.shared_exp["disp_targs"][idx,i] = int(info["disp_targs"])
-            self.shared_exp["is_animating"][idx,i] = int(info["is_animating"])
+            self.shared_exp["disp_targs"][idx,i]=int(info["disp_targs"])
+            anim = int(info["is_animating"])
+            self.shared_exp["is_animating"][idx,i] = anim
 
             state = next_state(
                 self.env,
@@ -1024,7 +950,11 @@ class Runner:
                 reset=done,
                 n_targs=sample_zipfian(self.hyps)
             )
-            if done: model.reset(1)
+            if done:
+                model.reset(1)
+                mtype=models.MODEL_TYPES.GETTYPE(self.hyps["model_type"])
+                if mtype == models.MODEL_TYPES.TRANSFORMER:
+                    break
             if debug and idx==0:
                 #env.render()
                 print("Actn:", actn)
@@ -1168,7 +1098,7 @@ class ValidationRunner(Runner):
         self.phase = try_key(self.hyps, "first_phase", 0)
         self.model = model
         if model is None:
-            self.model = NullModel(**self.hyps)
+            self.model = models.NullModel(**self.hyps)
         state = self.create_new_env()
         self.ep_rew = 0
         while True:
@@ -1578,10 +1508,8 @@ class ValidationRunner(Runner):
             if self.hyps["exp_name"]=="test": n_eps = 1
         # Get the conditional vector
         with torch.no_grad():
-            for i,env_type in enumerate(self.env_types):
-                if env_type == self.env.env_type:
-                    idxs = model.cdtnl_idxs[i][None]
-                    break
+            k = self.hyps["env2idx"][self.env.env_type]
+            idxs = model.cdtnl_idxs[k][None]
             cdtnl = model.cdtnl_lstm(idxs)
         while ep_count < n_eps:
             # Collect the state of the environment
