@@ -1817,7 +1817,10 @@ class Transformer(Model):
                 the index of the step to revert the recurrence to
         """
         if len(self.prev_hs) > step:
-            self.prev_hs = self.prev_hs[:step]
+            self.prev_hs = collections.deque(
+                list(self.prev_hs)[:step],
+                maxlen=self.seq_len
+            )
 
     def step(self, x, cdtnl, *args, **kwargs):
         """
