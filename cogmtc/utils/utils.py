@@ -348,15 +348,15 @@ def get_lang_labels(n_items,
         if null_label is None: null_label = base+2
         mcs = max_char_seq
         labels = get_numeral_labels(labels, base, mcs)
-        idx = n_items.reshape(-1)>max_targ
-        if torch.any(idx):
-            null = (torch.ones_like(labels)*-1).reshape(-1, mcs)
-            null[:,0] = null_label # null label
-            null[:,1] = base # stop label
-            og_shape = labels.shape
-            labels = labels.reshape(-1, mcs)
-            labels[idx] = null[idx]
-            labels = labels.reshape(og_shape)
+        #idx = n_items.reshape(-1)>max_targ
+        #if torch.any(idx):
+        #    null = (torch.ones_like(labels)*-1).reshape(-1, mcs)
+        #    null[:,0] = null_label # null label
+        #    null[:,1] = base # stop label
+        #    og_shape = labels.shape
+        #    labels = labels.reshape(-1, mcs)
+        #    labels[idx] = null[idx]
+        #    labels = labels.reshape(og_shape)
         return labels
 
     if int(use_count_words) == 1:
