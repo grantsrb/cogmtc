@@ -491,12 +491,12 @@ class DataCollector:
         self.hyps = hyps
 
         # Handle data sizes differently if Transformer model type
-        mtype = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
-        if mtype == models.MODEL_TYPES.TRANSFORMER:
+        mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
+        if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
             exp_len = self.hyps["exp_len"]
             seq_len = self.hyps["seq_len"]
             bsize   = self.hyps["batch_size"]
-            csize   = int(min(exp_len*bsize, 20000)//seq_len)*seq_len
+            csize   = int((exp_len*bsize)//seq_len)
             self.hyps["collection_size"] = csize
             self.hyps["exp_len"] = self.hyps["seq_len"]
             self.hyps["roll_data"] = False
@@ -1384,6 +1384,7 @@ class ValidationRunner(Runner):
                 actn_targs=data["actn_targs"],
                 lang_targs=data["lang_targs"],
                 drops=data["drops"],
+                masks=None,
                 n_targs=data["n_targs"],
                 n_items=data["n_items"],
                 prepender="",

@@ -60,7 +60,6 @@ def train(rank, hyps, verbose=True):
         data_collector.init_runner_procs(None)
     # Set initial phase
     data_collector.update_phase(try_key(hyps, "first_phase", 0))
-    data_collector.dispatch_runners()
     # Record experiment settings
     try:
         recorder = Recorder(hyps, model)
@@ -81,6 +80,7 @@ def train(rank, hyps, verbose=True):
         s = "\n\nBeginning First Phase: " + str(trainer.phase)
         recorder.write_to_log(s)
         print(s)
+        data_collector.dispatch_runners()
         # Loop training
         n_epochs = hyps["lang_epochs"] if first_phase==0 else\
                    hyps["actn_epochs"]
@@ -92,10 +92,10 @@ def train(rank, hyps, verbose=True):
             shared_model,
             verbose=verbose
         )
+        data_collector.await_runners()
+        data_collector.exp_replay.clear_experience()
     # Update phase accross training
     trainer.phase = hyps["second_phase"]
-    data_collector.await_runners()
-    data_collector.exp_replay.clear_experience()
     data_collector.update_phase(trainer.phase)
     data_collector.dispatch_runners()
     # Fresh optimizer
@@ -453,7 +453,8 @@ class Trainer:
 
             # Resets to h value to appropriate step of last loop
             self.reset_model(model, len(obs))
-            if drops.sum() == 0 and self.phase != 1:
+            if (drops.sum() == 0 and self.phase != 1) \
+                                or masks.float().sum() == len(masks):
                 print("No drops in loop", i, "... continuing")
                 with torch.no_grad():
                     logits, langs = model(
@@ -478,6 +479,7 @@ class Trainer:
                 lang_preds=langs,
                 actn_targs=actns,
                 lang_targs=labels,
+                masks=masks,
                 drops=drops,
                 n_targs=n_targs,
                 n_items=n_items,
