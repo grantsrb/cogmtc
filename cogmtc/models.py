@@ -87,9 +87,11 @@ class CoreModule(torch.nn.Module):
 
     def get_device(self):
         try:
-            return next(self.parameters()).get_device()
+            d = next(self.parameters()).get_device()
+            if d < 0: return "cpu"
+            return d
         except:
-            return False
+            return "cpu"
 
 class Model(CoreModule):
     """
@@ -920,7 +922,7 @@ class VaryCNN(Model):
         b,s = x.shape[:2]
         actn, langs = self.step(x.reshape(-1, *x.shape[2:]))
         langs = torch.stack(langs, dim=0).reshape(len(langs), b, s, -1)
-        return self.output_fxn(actn.reshape(b,s,-1)), langs
+        return actn.reshape(b,s,-1), langs
 
 class SimpleCNN(VaryCNN):
     """
@@ -1119,9 +1121,8 @@ class VaryLSTM(Model):
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
         """
-        if x.is_cuda:
-            self.h = self.h.to(x.get_device())
-            self.c = self.c.to(x.get_device())
+        self.h = self.h.to(self.get_device())
+        self.c = self.c.to(self.get_device())
         fx = self.features(x)
         fx = fx.reshape(len(x), -1) # (B, N)
         cat = torch.cat([fx, cdtnl], dim=-1)
@@ -1154,8 +1155,7 @@ class VaryLSTM(Model):
         langs = []
         self.prev_hs = []
         self.prev_cs = []
-        if x.is_cuda:
-            dones = dones.to(x.get_device())
+        dones = dones.to(self.get_device())
         for s in range(seq_len):
             actn, lang = self.step(x[:,s], cdtnl[tasks[:,s]])
             actns.append(actn.unsqueeze(1))
@@ -1167,10 +1167,7 @@ class VaryLSTM(Model):
             self.h, self.c = self.partial_reset(dones[:,s])
             self.prev_hs.append(self.h.detach().data)
             self.prev_cs.append(self.c.detach().data)
-        return (
-            torch.output_fxn(torch.cat(actns, dim=1)),
-            torch.cat(langs, dim=2)
-        )
+        return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
 
 class SymmetricLSTM(VaryLSTM):
     """
@@ -1343,7 +1340,7 @@ class SymmetricLSTM(VaryLSTM):
             self.actn = self.prev_actns[step].detach().data
             self.lang = self.prev_langs[step].detach().data
 
-    def step(self, x, cdtnl, *args, **kwargs):
+    def step(self, x, cdtnl, mask=None, *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -1352,58 +1349,95 @@ class SymmetricLSTM(VaryLSTM):
                 a single step of observations
             cdtnl: torch FloatTensor (B, E)
                 the conditional latent vectors
+            mask: torch LongTensor or BoolTensor (B,)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
         Returns:
             actn: torch Float Tensor (B, K)
-            langs: list of torch Float Tensor (B, L)
+            langs: list of torch Float Tensor [ (B, L) ]
         """
-        if x.is_cuda:
-            self.actn = self.actn.to(x.get_device())
-            self.lang = self.lang.to(x.get_device())
-            for i in range(self.n_lstms):
-                self.hs[i] = self.hs[i].to(x.get_device())
-                self.cs[i] = self.cs[i].to(x.get_device())
-        fx = self.features(x)
-        fx = fx.reshape(len(x), -1) # (B, N)
-        cat = torch.cat([fx, cdtnl], dim=-1)
+        # Not that the mask gets flipped to where 1 means keep the
+        # calculation in the data
+        if mask is None:
+            mask = torch.ones(x.shape[0]).long()
+        else:
+            mask = (1-mask)
+        mask = mask.bool() # bool is important for using the mask as an
+        # indexing tool
+        device = self.get_device()
+        self.actn = self.actn.to(device)
+        self.lang = self.lang.to(device)
+        mask = mask.to(device)
+        for i in range(self.n_lstms):
+            self.hs[i] = self.hs[i].to(device)
+            self.cs[i] = self.cs[i].to(device)
 
-        h, c = self.lstm( cat, (self.hs[0], self.cs[0]) )
+        fx = self.features(x[mask])
+        fx = fx.reshape(len(fx), -1) # (B, N)
+        cat = torch.cat([fx, cdtnl[mask]], dim=-1)
+
+        h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
         if self.lnorm:
             c = self.layernorm_c(c)
             h = self.layernorm_h(h)
 
         inpt = [h]
         if self.incl_actn_inpt:
-            inpt.append(self.actn_consolidator(self.actn))
+            inpt.append(self.actn_consolidator(self.actn[mask]))
         if self.incl_lang_inpt:
             if self.langactn_inpt_type != LANGACTN_TYPES.HVECTOR and\
                             self.lang.shape[-1] < self.cat_lang_size:
-                l = torch.zeros(len(x),self.cat_lang_size)
-                if x.is_cuda: l = l.to(x.get_device())
-                inpt.append(l)
+                inpt.append(
+                  torch.zeros(len(fx),self.cat_lang_size,device=device)
+                )
             else:
-                inpt.append(self.lang)
+                inpt.append(self.lang[mask])
         if self.skip_lstm: 
             inpt.append(cat)
         inpt = torch.cat(inpt, dim=-1)
 
-        actn_h, actn_c = self.actn_lstm( inpt, (self.hs[1], self.cs[1]) )
+        actn_h, actn_c = self.actn_lstm(
+            inpt,
+            (self.hs[1][mask], self.cs[1][mask])
+        )
         actn = self.actn_dense(actn_h)
 
-        lang_h, lang_c = self.lang_lstm( inpt, (self.hs[2], self.cs[2]) )
+        lang_h, lang_c = self.lang_lstm(
+            inpt,
+            (self.hs[2][mask], self.cs[2][mask])
+        )
         lang = self.lang_denses[0](lang_h)
 
-        if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
-            self.actn = self.actn_consolidator(actn_h)
-            self.lang = self.lang_consolidator(lang_h)
-        else:
-            self.actn = self.actn_consolidator(actn)
-            self.lang = self.lang_consolidator(lang)
+        if self.incl_actn_inpt or self.incl_lang_inpt:
+            self.actn = torch.zeros_like(self.actn)
+            self.lang = torch.zeros_like(self.lang)
+            if self.langactn_inpt_type == LANGACTN_TYPES.HVECTOR:
+                self.actn[mask] = self.actn_consolidator(actn_h)
+                self.lang[mask] = self.lang_consolidator(lang_h)
+            else:
+                self.actn[mask] = self.actn_consolidator(actn)
+                self.lang[mask] = self.lang_consolidator(lang)
 
-        self.hs = [h, actn_h, lang_h]
-        self.cs = [c, actn_c, lang_c]
-        return self.output_fxn(actn), [lang]
+        temp_hs = [h, actn_h, lang_h]
+        temp_cs = [c, actn_c, lang_c]
+        for i in range(len(self.hs)):
+            temp_h = torch.zeros_like(self.hs[i])
+            temp_h[mask] = temp_hs[i]
+            self.hs[i] = temp_h
+            temp_c = torch.zeros_like(self.cs[i])
+            temp_c[mask] = temp_cs[i]
+            self.cs[i] = temp_c
 
-    def forward(self, x, dones, tasks, *args, **kwargs):
+        actn = self.output_fxn(actn)
+        temp_actn = torch.zeros(x.shape[0],actn.shape[-1],device=device)
+        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
+        temp_actn[mask] = actn
+        temp_lang[mask] = lang
+        return temp_actn, [temp_lang]
+
+    def forward(self, x, dones, tasks, masks, *args, **kwargs):
         """
         Args:
             x: torch FloatTensor (B, S, C, H, W)
@@ -1412,6 +1446,11 @@ class SymmetricLSTM(VaryLSTM):
                 vectors are reset when encountering a done signal
             tasks: torch Long Tensor (B, S)
                 the task signal corresponding to each environment.
+            masks: torch LongTensor or BoolTensor (B,S)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
@@ -1428,10 +1467,16 @@ class SymmetricLSTM(VaryLSTM):
         if x.is_cuda:
             dones = dones.to(x.get_device())
         for s in range(seq_len):
-            actn, lang = self.step(x[:,s], cdtnl[tasks[:,s]])
-            actns.append(actn.unsqueeze(1))
-            lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
-            langs.append(lang)
+            if masks[:,s].sum() == len(masks):
+                actns.append(torch.zeros_like(actns[-1]))
+                langs.append(torch.zeros_like(langs[-1]))
+            else:
+                actn, lang = self.step(
+                    x[:,s], cdtnl[tasks[:,s]], masks[:,s]
+                )
+                actns.append(actn.unsqueeze(1))
+                lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
+                langs.append(lang)
 
             tup = self.partial_reset(dones[:,s])
             self.hs, self.cs, self.actn, self.lang = tup
@@ -1439,10 +1484,7 @@ class SymmetricLSTM(VaryLSTM):
             self.prev_cs.append([c.detach().data for c in self.cs])
             self.prev_actns.append(self.actn)
             self.prev_langs.append(self.lang)
-        return (
-            self.output_fxn(torch.cat(actns, dim=1)),
-            torch.cat(langs, dim=2)
-        )
+        return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
 
 
 class DoubleVaryLSTM(VaryLSTM):
@@ -1599,10 +1641,7 @@ class DoubleVaryLSTM(VaryLSTM):
             self.hs, self.cs = self.partial_reset(dones[:,s])
             self.prev_hs.append([h.detach().data for h in self.hs])
             self.prev_cs.append([c.detach().data for c in self.cs])
-        return (
-            self.output_fxn(torch.cat(actns, dim=1)),
-            torch.cat(langs, dim=2)
-        )
+        return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
 
 
 class SimpleLSTM(VaryLSTM):
