@@ -443,6 +443,42 @@ def change_base(n, base):
         rem = new_rem
     return int(chars)
 
+def basen_2base10(arr, base):
+    """
+    Vectorized function to change all values of base base in arr to
+    base 10.
+
+    Args:
+        arr: ndarray or torch tensor
+            array of base based values
+        base: int
+            the current base of the values in arr
+    Returns:
+        base10: same type as arr
+            the converted values
+    """
+    if isinstance(arr, int): arr = np.asarray([arr])
+    if type(arr) == type(np.array([])):
+        mod = np.mod
+        div = np.zeros(1)+10
+        base10 = np.zeros_like(arr)
+        floor = np.floor
+    else:
+        mod = torch.remainder
+        div = torch.zeros(1)+10
+        base10 = torch.zeros_like(arr)
+        floor = torch.floor
+
+    i = 0
+    while (arr>0).sum() > 1:
+        mult = base**i
+        i+=1
+        rem = mod(arr, div)
+        add = (rem*mult).astype("int")
+        base10[arr>0] += add[arr>0]
+        arr = floor(arr/10)
+    return base10
+
 def pre_step_up(arr):
     """
     A function to determine what indices are less than their
