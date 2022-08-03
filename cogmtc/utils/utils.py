@@ -501,7 +501,8 @@ def convert_numeral_array_to_numbers(numerals, base):
     """
     converts a numeral array (representing a single number in any base)
     to a single number. i.e. the numeral array in base 4
-    [1, 3, 1, 4, -1] will be converted to [131].
+    [1, 3, 1, 4, -1] will be converted to [131]. Assumes the base is
+    the STOP token
 
     Args:
         numerals: torch long tensor (..., B)
@@ -522,7 +523,7 @@ def convert_numeral_array_to_numbers(numerals, base):
     for i in range(numerals.shape[-1]):
         nums += (tens**exps)*numerals[...,i]
         exps -= 1
-    return nums
+    return torch.round(nums)
 
 def get_loss_and_accs(phase,
                       actn_preds,
@@ -962,4 +963,373 @@ def max_one_hot(tensor, dim=-1):
     mask = torch.zeros_like(tensor).scatter_(-1, args, torch.ones_like(tensor))
     #mask = (tensor==torch.gather(tensor, -1, args)).float()
     return mask
+
+def get_hook(layer_dict, key, to_numpy=True, to_cpu=False):
+    """
+    Returns a hook function that can be used to collect gradients
+    or activations in the backward or forward pass respectively of
+    a torch Module.
+
+    Args:
+        layer_dict: dict
+            Can be empty
+
+            keys: str
+                names of model layers of interest
+            vals: NA
+        key: str
+            name of layer of interest
+        to_numpy: bool
+            if true, the gradients/activations are returned as ndarrays.
+            otherwise they are returned as torch tensors
+    Returns:
+        hook: function
+            a function that works as a torch hook
+    """
+    if to_numpy:
+        def hook(module, inp, out):
+            layer_dict[key] = out.detach().cpu().numpy()
+    elif to_cpu:
+        def hook(module, inp, out):
+            layer_dict[key] = out.cpu()
+    else:
+        def hook(module, inp, out):
+            layer_dict[key] = out
+    return hook
+
+def inspect(model, X, insp_keys=set(), batch_size=500, to_numpy=True,
+                                                      to_cpu=True,
+                                                      no_grad=False,
+                                                      verbose=False):
+    """
+    Get the response from the argued layers in the model as np arrays.
+    If model is on cpu, operations are performed on cpu. Put model on
+    gpu if you desire operations to be performed on gpu.
+
+    Args:
+        model - torch Module or torch gpu Module
+        X - ndarray or FloatTensor (T,C,H,W)
+        insp_keys - set of str
+            name of layers activations to collect. if empty set, only
+            the final output is returned.
+        to_numpy - bool
+            if true, activations will all be ndarrays. Otherwise torch
+            tensors
+        to_cpu - bool
+            if true, torch tensors will be on the cpu.
+            only effective if to_numpy is false.
+        no_grad: bool
+            if true, gradients will not be calculated. if false, has
+            no impact on function.
+
+    returns: 
+        layer_outs: dict of np arrays or torch cpu tensors
+            "outputs": default key for output layer
+    """
+    layer_outs = dict()
+    handles = []
+    insp_keys_copy = set()
+    for key, mod in model.named_modules():
+        if key in insp_keys:
+            insp_keys_copy.add(key)
+            hook = get_hook(layer_outs, key, to_numpy=to_numpy,
+                                                 to_cpu=to_cpu)
+            handle = mod.register_forward_hook(hook)
+            handles.append(handle)
+    if len(set(insp_keys)-insp_keys_copy) > 0:
+        print("Insp keys:", insp_keys-insp_keys_copy, "not found")
+    insp_keys = insp_keys_copy
+    if not isinstance(X,torch.Tensor):
+        X = torch.FloatTensor(X)
+
+    # prev_grad_state is used to ensure we do not mess with an outer
+    # "with torch.no_grad():" statement
+    prev_grad_state = torch.is_grad_enabled() 
+    if to_numpy or no_grad:
+        # Turns off all gradient calculations. When returning numpy
+        # arrays, the computation graph is inaccessible, as such we
+        # do not need to calculate it.
+        torch.set_grad_enabled(False)
+
+    try:
+        if batch_size is None or batch_size > len(X):
+            if next(model.parameters()).is_cuda:
+                X = X.to(DEVICE)
+            preds = model(X)
+            if to_numpy:
+                layer_outs['outputs'] = preds.detach().cpu().numpy()
+            else:
+                layer_outs['outputs'] = preds.cpu()
+        else:
+            use_cuda = next(model.parameters()).is_cuda
+            batched_outs = {key:[] for key in insp_keys}
+            outputs = []
+            rnge = range(0,len(X), batch_size)
+            if verbose:
+                rnge = tqdm(rnge)
+            for batch in rnge:
+                x = X[batch:batch+batch_size]
+                if use_cuda:
+                    x = x.to(DEVICE)
+                preds = model(x).cpu()
+                if to_numpy:
+                    preds = preds.detach().numpy()
+                outputs.append(preds)
+                for k in layer_outs.keys():
+                    batched_outs[k].append(layer_outs[k])
+                    layer_outs[k] = None
+            batched_outs['outputs'] = outputs
+            if to_numpy:
+                layer_outs = {k:np.concatenate(v,axis=0) for k,v in\
+                                               batched_outs.items()}
+            else:
+                layer_outs = {k:torch.cat(v,dim=0) for k,v in\
+                                         batched_outs.items()}
+    except RuntimeError as e:
+        print("Runtime error. Check your batch size and try using",
+                "inspect with torch.no_grad() enabled")
+        raise RuntimeError(str(e))
+
+        
+    # If we turned off the grad state, this will turn it back on.
+    # Otherwise leaves it the same.
+    torch.set_grad_enabled(prev_grad_state) 
+    
+    # This for loop ensures we do not create a memory leak when
+    # using hooks
+    for i in range(len(handles)):
+        handles[i].remove()
+    del handles
+
+    return layer_outs
+
+def get_stim_grad(model, X, layer, cell_idx, batch_size=500,
+                                           layer_shape=None,
+                                           to_numpy=True,
+                                           ret_resps=False,
+                                           verbose=True):
+    """
+    Gets the gradient of the model output at the specified layer and
+    cell idx with respect to the inputs (X). Returns a gradient array
+    with the same shape as X.
+
+    Args:
+        model: nn.Module
+        X: torch FloatTensor
+        layer: str
+        cell_idx: int or tuple (chan, row, col)
+            idx of cell (channel) of interest
+        batch_size: int
+            size of batching for calculations
+        layer_shape: tuple of ints (chan, row, col)
+            changes the shape of the argued layer to this shape if tuple
+        to_numpy: bool
+            returns the gradient vector as a numpy array if true
+        ret_resps: bool
+            if true, also returns the model responses
+    Returns:
+        grad: torch tensor or ndarray (same shape as X)
+            the gradient of the output cell with respect to X
+    """
+    if verbose:
+        print("layer:", layer)
+    requires_grad(model, False)
+    cud = next(model.parameters()).is_cuda
+    device = torch.device('cuda:0') if cud else torch.device('cpu')
+    prev_grad_state = torch.is_grad_enabled() 
+    torch.set_grad_enabled(True)
+
+    if model.recurrent:
+        batch_size = 1
+        hs = [torch.zeros(batch_size, *h_shape).to(device) for\
+                                     h_shape in model.h_shapes]
+
+    if layer == 'output' or layer=='outputs':
+        layer = "sequential."+str(len(model.sequential)-1)
+    hook_outs = dict()
+    module = None
+    for name, modu in model.named_modules():
+        if name == layer:
+            if verbose:
+                print("hook attached to " + name)
+            module = modu
+            hook = get_hook(hook_outs,key=layer,to_numpy=False)
+            hook_handle = module.register_forward_hook(hook)
+
+    # Get gradient with respect to activations
+    if type(X) == type(np.array([])):
+        X = torch.FloatTensor(X)
+    X.requires_grad = True
+    resps = []
+    n_loops = X.shape[0]//batch_size
+    rng = range(n_loops)
+    if verbose:
+        rng = tqdm(rng)
+    for i in rng:
+        idx = i*batch_size
+        x = X[idx:idx+batch_size].to(device)
+        if model.recurrent:
+            resp, hs = model(x, hs)
+            hs = [h.data for h in hs]
+        else:
+            resp = model(x)
+        if layer_shape is not None:
+            n_samps = len(hook_outs[layer])
+            hook_outs[layer] = hook_outs[layer].reshape(n_samps,
+                                                        *layer_shape)
+        # Outs are the activations at the argued layer and cell idx
+        # for the batch
+        if type(cell_idx) == type(int()):
+            fx = hook_outs[layer][:,cell_idx]
+        elif len(cell_idx) == 1:
+            fx = hook_outs[layer][:,cell_idx[0]]
+        else:
+            fx = hook_outs[layer][:, cell_idx[0], cell_idx[1],
+                                                  cell_idx[2]]
+        fx = fx.sum()
+        fx.backward()
+        resps.append(resp.data.cpu())
+    hook_handle.remove()
+    requires_grad(model, True)
+    torch.set_grad_enabled(prev_grad_state) 
+    grad = X.grad.data.cpu()
+    resps = torch.cat(resps,dim=0)
+    if to_numpy:
+        grad = grad.numpy()
+        resps = resps.numpy()
+    if ret_resps:
+        return grad, resps
+    return grad
+
+def integrated_gradient(model, X, layer='sequential.2', chans=None,
+                                                    spat_idx=None,
+                                                    alpha_steps=10,
+                                                    batch_size=500,
+                                                    y=None,
+                                                    lossfxn=None,
+                                                    to_numpy=False,
+                                                    verbose=False):
+    """
+    Returns the integrated gradient for a particular stimulus at the
+    argued layer. This function always operates with the model in
+    eval mode due to the need for a deterministic model. If the model
+    is argued in train mode, it is set to eval mode for this function
+    and returned to train mode at the end of the function. As such,
+    this note is largely irrelavant, but will hopefully satisfy the
+    curious or anxious ;)
+
+    Inputs:
+        model: PyTorch Deep Retina models
+        X: Input stimuli ndarray or torch FloatTensor (T,D,H,W)
+        layer: str layer name
+        chans: int or list of ints or None
+            the channels of interest. if None, uses all channels
+        spat_idx: tuple of ints (row, col)
+            the row and column of interest. if None, the spatial
+            location of the recordings is used for each channel.
+        alpha_steps: int, integration steps
+        batch_size: step size when performing computations on GPU
+        y: torch FloatTensor or ndarray (T,N)
+            if None, ignored
+        lossfxn: some differentiable function
+            if None, ignored
+    Outputs:
+        intg_grad: ndarray or FloatTensor (T, C, H1, W1)
+            integrated gradient
+        gc_activs: ndarray or FloatTensor (T,N)
+            activation of the final layer of the model
+    """
+    # Handle Gradient Settings
+    # Model gradient unnecessary for integrated gradient
+    requires_grad(model, False)
+
+    # Save current grad calculation state
+    prev_grad_state = torch.is_grad_enabled()
+    torch.set_grad_enabled(True) # Enable grad calculations
+    prev_train_state = model.training
+    model.eval()
+
+    layer_idx = get_layer_idx(model, layer=layer)
+    shape = model.get_shape(X.shape[-2:], layer)
+    intg_grad = torch.zeros(len(X), model.chans[layer_idx],*shape)
+    gc_activs = None
+    model.to(DEVICE)
+
+    if chans is None:
+        chans = list(range(model.n_units))
+    elif isinstance(chans,int):
+        chans = [chans]
+
+    # Handle convolutional Ganglion Cell output by replacing GrabUnits
+    # coordinates for desired cell
+    prev_coords = None
+    if spat_idx is not None:
+        if isinstance(spat_idx, int): spat_idx = (spat_idx, spat_idx)
+        row, col = spat_idx
+        mod_idx = get_module_idx(model, GrabUnits)
+        assert mod_idx >= 0, "not yet compatible with one-hot models"
+        grabber = model.sequential[mod_idx]
+        prev_coords = grabber.coords.clone()
+        for chan in chans:
+            grabber.coords[chan,0] = row
+            grabber.coords[chan,1] = col
+    if batch_size is None:
+        batch_size = len(X)
+    if not isinstance(X, torch.Tensor):
+        X = torch.FloatTensor(X)
+    X.requires_grad = True
+    idxs = torch.arange(len(X)).long()
+    for batch in range(0, len(X), batch_size):
+        prev_response = None
+        linspace = torch.linspace(0,1,alpha_steps)
+        if verbose:
+            print("Calculating for batch {}/{}".format(batch, len(X)))
+            linspace = tqdm(linspace)
+        idx = idxs[batch:batch+batch_size]
+        for alpha in linspace:
+            x = alpha*X[idx]
+            # Response is dict of activations. response[layer] has
+            # shape intg_grad.shape
+            response = inspect(model, x, insp_keys=[layer],
+                                           batch_size=None,
+                                           to_numpy=False,
+                                           to_cpu=False,
+                                           no_grad=False,
+                                           verbose=False)
+            if prev_response is not None:
+                ins = response[layer]
+                outs = response['outputs'][:,chans]
+                if lossfxn is not None and y is not None:
+                    truth = y[idx][:,chans]
+                    outs = lossfxn(outs,truth)
+                grad = torch.autograd.grad(outs.sum(), ins)[0]
+                grad = grad.data.detach().cpu()
+                grad = grad.reshape(len(grad), *intg_grad.shape[1:])
+                l = layer
+                act = (response[l].data.cpu()-prev_response[l])
+                act = act.reshape(grad.shape)
+                intg_grad[idx] += grad*act
+                if alpha == 1:
+                    if gc_activs is None:
+                        gc_activs = torch.zeros(len(X),len(chans))
+                    outs = response['outputs'][:,chans]
+                    gc_activs[idx] = outs.data.cpu()
+            prev_response={k:v.data.cpu() for k,v in response.items()}
+    del response
+    del grad
+    if len(gc_activs.shape) == 1:
+        gc_activs = gc_activs.unsqueeze(1) # Create new axis
+
+    if prev_coords is not None:
+        grabber.coords = prev_coords
+    # Return to previous gradient calculation state
+    requires_grad(model, True)
+    # return to previous grad calculation state and training state
+    torch.set_grad_enabled(prev_grad_state)
+    if prev_train_state: model.train()
+    if to_numpy:
+        ndgrad = intg_grad.data.cpu().numpy()
+        ndactivs = gc_activs.data.cpu().numpy()
+        return ndgrad, ndactivs
+    return intg_grad, gc_activs
 

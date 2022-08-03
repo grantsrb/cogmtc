@@ -257,7 +257,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
 
     "depths": tuple of ints
         the depths of the cnn layers. the number of cnn layers is
-        dependent on the number of items in this tuple
+        dependent on the number of items in this tuple. This is
+        also used to determine the embedding size of vision transformers
     "kernels": tuple of ints
         the kernel sizes of the cnn layers. the number of items in this
         tuple should match that of the number of items in `depths`
@@ -371,6 +372,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         optional argument, if argued, determines the maximum number of
         steps that an episode can take. Be careful to make completion
         of an episode possible within the argued number of steps!
+
+    "n_heads": int
+        the number of transformer attention heads
+    "n_vit_layers": int
+        the number of vision transformer encoder layers
+    "n_layers": int
+        the number of transformer encoder layers
     "max_ctx_len": null or int
         if you would like to increase the context length for trainings
         using the transformer class without increasing the back-

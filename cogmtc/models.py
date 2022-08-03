@@ -118,6 +118,7 @@ class Model(CoreModule):
         env_types=["gordongames-v4"],
         n_heads=8,
         n_layers=3,
+        n_vit_layers=3,
         n_outlayers=2,
         seq_len=64,
         output_fxn="NullOp",
@@ -135,6 +136,8 @@ class Model(CoreModule):
         langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
         zero_after_stop=False,
         use_count_words=None,
+        max_ctx_len=None,
+        vision_type=None,
         *args, **kwargs
     ):
         """
@@ -183,6 +186,8 @@ class Model(CoreModule):
                 the number of attention heads if using a transformer
             n_layers: int
                 the number of transformer layers.
+            n_vit_layers: int
+                the number of vision transformer layers.
             n_outlayers: int
                 the number of layers for the actn and language dense
                 network output modules if using the Vary variants of
@@ -257,6 +262,13 @@ class Model(CoreModule):
                 is used as input on the next time step are set to zero.
             use_count_words: int
                 the type of language training
+            max_ctx_len: int or None
+                the maximum context length for the transformer models
+                (not including the ViT)
+            vision_type: str
+                the model class to be used for the raw visual processing
+                options include (but are probably not limited to):
+                VaryCNN, ViT
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -281,6 +293,7 @@ class Model(CoreModule):
         self.initialize_conditional_variables()
         self.n_heads = n_heads
         self.n_layers = n_layers
+        self.n_vit_layers = n_vit_layers
         self.seq_len = seq_len
         self.max_char_seq = max_char_seq
         self.STOP = STOP
@@ -305,6 +318,8 @@ class Model(CoreModule):
         self.langactn_inpt_type = langactn_inpt_type
         self.zero_after_stop = zero_after_stop
         self.use_count_words = use_count_words
+        self.max_ctx_len = 128 if max_ctx_len is None else max_ctx_len
+        self.vision_type = vision_type
 
     def initialize_conditional_variables(self):
         """
@@ -852,7 +867,7 @@ class VaryCNN(Model):
         relu
         linear
     """
-    def __init__(self,*args, **kwargs):
+    def __init__(self, feats_only=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model_type = MODEL_TYPES.CNN
         modules = []
@@ -889,9 +904,10 @@ class VaryCNN(Model):
         self.features = nn.Sequential(*modules)
         self.flat_size = int(np.prod(shape))
 
-        # Make Action MLP
-        self.make_actn_dense(inpt_size=self.flat_size)
-        self.make_lang_denses(inpt_size=self.flat_size)
+        if not feats_only:
+            # Make Action MLP
+            self.make_actn_dense(inpt_size=self.flat_size)
+            self.make_lang_denses(inpt_size=self.flat_size)
 
     def step(self, x, *args, **kwargs):
         """
@@ -904,6 +920,119 @@ class VaryCNN(Model):
         """
         fx = self.features(x)
         fx = fx.reshape(len(fx), -1)
+        actn = self.actn_dense(fx)
+        langs = []
+        for dense in self.lang_denses:
+            lang = dense(fx)
+            langs.append(lang)
+        return self.output_fxn(actn), langs
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+        """
+        b,s = x.shape[:2]
+        actn, langs = self.step(x.reshape(-1, *x.shape[2:]))
+        langs = torch.stack(langs, dim=0).reshape(len(langs), b, s, -1)
+        return actn.reshape(b,s,-1), langs
+
+class ViT(Model):
+    """
+    A Vision Transformer
+        conv embedding projection
+        cls cat
+        positional encoding
+        encoder
+        return cls
+    """
+
+    def __init__(self, feats_only=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model_type = MODEL_TYPES.CNN
+        modules = []
+        shape = [*self.inpt_shape[-3:]]
+        self.shapes = [shape, shape]
+        if (self.depths[1]%self.n_heads) != 0:
+            ceil = math.ceil( self.depths[1]/self.n_heads )
+            self.depths[1] = ceil*self.n_heads
+        self.flat_size = self.depths[1]
+        modules = [
+            nn.Conv2d(
+                self.depths[0],
+                self.depths[1],
+                kernel_size=self.kernels[0],
+                stride=self.strides[0],
+                padding=self.paddings[0]
+            )
+        ]
+        modules.append(Reshape((self.depths[1], -1)))
+        modules.append(Transpose((0,2,1)))
+        self.emb_proj = nn.Sequential(*modules)
+
+        # Transformer
+        self.cls = nn.Parameter(
+            torch.randn(1,1,self.depths[1])/np.sqrt(self.depths[1])
+        )
+        self.pos_enc = PositionalEncoding(
+            self.depths[1],
+            self.feat_drop_p
+        )
+        enc_layer = nn.TransformerEncoderLayer(
+            self.depths[1],
+            self.n_heads,
+            3*self.depths[1],
+            self.feat_drop_p,
+            norm_first=True,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(
+            enc_layer,
+            self.n_vit_layers
+        )
+
+        if not feats_only:
+            self.make_actn_dense()
+            self.make_lang_denses()
+
+        # Memory
+        if self.lnorm:
+            self.layernorm = nn.LayerNorm(self.depths[1])
+        self.h = None
+        self.c = None
+        self.reset(batch_size=1)
+
+    def features(self, x, cls=None, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+            cls: torch FloatTensor (B,1,D)
+        Returns:
+            fx: torch FloatTensor (B, D)
+        """
+        embs = self.emb_proj(x)
+        if cls is None: cls = self.cls.repeat((len(x), 1,1))
+        embs = torch.cat([cls, embs], axis=1)
+        embs = self.pos_enc(embs)
+        embs = self.encoder(embs)
+        return embs[:,0]
+
+    def step(self, x, cls=None, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+            cls: torch FloatTensor (B,1,D)
+        Returns:
+            pred: torch FloatTensor (B, D)
+        """
+        if cls is None:
+            cls = self.cls.repeat((len(x),1,1))
+        fx = self.features(x, cls)
         actn = self.actn_dense(fx)
         langs = []
         for dense in self.lang_denses:
@@ -1036,12 +1165,17 @@ class VaryLSTM(Model):
             "bnorm must be False. it does not work with Recurrence!"
 
         # Convs
-        cnn = VaryCNN(*args, **kwargs)
-        self.shapes = cnn.shapes
-        self.features = cnn.features
+        if self.vision_type is None:
+            self.cnn = VaryCNN(*args, feats_only=True, **kwargs)
+        else:
+            self.cnn = globals()[self.vision_type](
+                *args, feats_only=True, **kwargs
+            )
+        self.shapes = self.cnn.shapes
+        self.features = self.cnn.features
 
         # LSTM
-        self.flat_size = cnn.flat_size
+        self.flat_size = self.cnn.flat_size
         self.lstm = nn.LSTMCell(self.flat_size+self.h_size, self.h_size)
 
         self.make_actn_dense()
@@ -1774,12 +1908,17 @@ class Transformer(Model):
             "bnorm must be False. it does not work with Recurrence!"
 
         # Convs
-        cnn = VaryCNN(*args, **kwargs)
-        self.shapes = cnn.shapes
-        self.features = cnn.features
+        if self.vision_type is None:
+            self.cnn = VaryCNN(*args, feats_only=True, **kwargs)
+        else:
+            self.cnn = globals()[self.vision_type](
+                *args, feats_only=True, **kwargs
+            )
+        self.shapes = self.cnn.shapes
+        self.features = self.cnn.features
 
         # Linear Projection
-        self.flat_size = cnn.flat_size
+        self.flat_size = self.cnn.flat_size
         self.proj = nn.Sequential(
             Flatten(),
             nn.Linear(self.flat_size, self.h_size)
@@ -1811,11 +1950,11 @@ class Transformer(Model):
             self.layernorm = nn.LayerNorm(self.h_size)
         self.h = None
         self.c = None
+        self.hs = []
         self.reset(batch_size=1)
-        max_seq_len = 128
         self.register_buffer(
             "fwd_mask",
-            get_transformer_fwd_mask(s=max_seq_len+1)
+            get_transformer_fwd_mask(s=self.max_ctx_len+1)
         )
 
     def reset(self, batch_size=1):
@@ -1829,6 +1968,9 @@ class Transformer(Model):
             None
         """
         self.prev_hs = collections.deque(maxlen=self.seq_len)
+        self.h = torch.zeros(
+            batch_size, self.h_size, device=self.get_device()
+        )
 
     def partial_reset(self, dones):
         """
@@ -1884,6 +2026,7 @@ class Transformer(Model):
         encs = encs[:,-1] # grab last prediction only
         if self.lnorm:
             encs = self.layernorm(encs)
+        self.h = encs
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(encs))
@@ -1954,7 +2097,26 @@ class SepTransformer(Transformer):
         if self.lnorm:
             self.actnnorm = nn.LayerNorm(self.h_size)
             self.langnorm = nn.LayerNorm(self.h_size)
+        self.hs = []
         self.reset(batch_size=1)
+
+    def reset(self, batch_size=1):
+        """
+        Resets the memory vectors
+
+        Args:
+            batch_size: int
+                the size of the incoming batches
+        Returns:
+            None
+        """
+        self.prev_hs = collections.deque(maxlen=self.seq_len)
+        self.hs = [
+          torch.zeros(batch_size,self.h_size,device=self.get_device()),
+          torch.zeros(batch_size,self.h_size,device=self.get_device()),
+          torch.zeros(batch_size,self.h_size,device=self.get_device()),
+        ]
+
 
     def step(self, x, cdtnl, *args, **kwargs):
         """
@@ -1981,6 +2143,7 @@ class SepTransformer(Transformer):
         if self.lnorm:
             actn_encs = self.actnnorm(actn_encs)
             lang_encs = self.langnorm(lang_encs)
+        self.hs = [ encs[:,-1], actn_encs[:,-1], lang_encs[:,-1] ]
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(lang_encs))

@@ -19,14 +19,42 @@ class Reshape(nn.Module):
     is the batch size.
     """
     def __init__(self, shape):
+        """
+        shape: tuple of ints
+            do not include batch size
+        """
         super(Reshape, self).__init__()
         self.shape = shape
 
     def forward(self, x):
-        return x.view(self.shape)
+        return x.view(len(x), *self.shape)
 
     def extra_repr(self):
         return "shape={}".format(self.shape)
+
+class Transpose(nn.Module):
+    """
+    Transposes the argued axes. Do include the batch dimension in
+    your argument
+    """
+    def __init__(self, axes, *args):
+        """
+        axes: tuple of ints
+            do include the batch dimension
+        """
+        super().__init__()
+        if type(axes)==int: axes = [axes] 
+        else: axes = [*axes]
+
+        if len(args) > 0:
+            axes = axes + [*args]
+        self.axes = axes
+    
+    def forward(self, x, *args, **kwargs):
+        """
+        x: torch tensor
+        """
+        return x.permute(self.axes)
 
 class GaussianNoise(nn.Module):
     def __init__(self, std=0.1, trainable=False, adapt=False,
