@@ -319,6 +319,7 @@ def get_lang_labels(n_items,
                     null_label=None):
     """
     Determines the language labels based on the type of training.
+    null_labels are only applied to English and Duplicate variants
 
     Args:
         n_items: torch Tensor (N,)

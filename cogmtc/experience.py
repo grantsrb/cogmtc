@@ -1638,6 +1638,7 @@ class ValidationRunner(Runner):
                     max_targ=self.hyps["max_lang_targ"],
                     use_count_words=self.hyps["use_count_words"],
                     base=self.hyps["numeral_base"],
+                    max_char_seq=self.hyps["max_char_seq"],
                     null_label=self.hyps["null_label"]
                 ).item()
                 print( "Lang (pred, targ):",
