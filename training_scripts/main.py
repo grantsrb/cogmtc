@@ -1,6 +1,6 @@
 import torch
 import cogmtc
-from langpractice.utils.training import run_training
+from cogmtc.utils.training import run_training
 import torch.multiprocessing as mp
 
 torch.autograd.set_detect_anomaly(True)
