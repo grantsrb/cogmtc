@@ -399,7 +399,7 @@ def hyper_search(hyps, hyp_ranges, train_fxn):
             f.write(s)
         f.write('\n')
 
-    hyper_q = collections.deque()
+    hyper_q = deque()
     hyper_q = fill_hyper_q(hyps, hyp_ranges, list(hyp_ranges.keys()),
                                                       hyper_q, idx=0)
     total_searches = len(hyper_q)
