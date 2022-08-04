@@ -26,7 +26,8 @@
     "model_type": "DoubleVaryLSTM",
     "lstm_lang_first": true,
     "incl_lang_inpt": true,
-    "incl_actn_inpt": false,
+    "lang_teacher_p": 0.9,
+    "lang_inpt_drop_p": 0.3,
     "one_hot_inpt": false,
 
     "output_fxn": "Tanh",

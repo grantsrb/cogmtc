@@ -8,17 +8,11 @@ import numpy as np
 import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment
 from cogmtc.oracles import *
-from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up
+from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL
+
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
 import math
-
-INEQUALITY = 0
-ENGLISH = 1
-PIRAHA = 2
-RANDOM = 3
-DUPLICATES = 4
-NUMERAL = 5
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")
@@ -241,7 +235,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
             use_count_words=self.hyps["use_count_words"],
             max_char_seq=self.hyps["max_char_seq"],
             base=self.hyps["numeral_base"],
-            null_label=self.hyps["null_label"]
+            lang_offset=self.hyps["lang_offset"],
+            null_label=self.hyps["null_label"],
+            stop_label=self.hyps["STOP"]
         )
         if try_key(self.hyps, "pre_grab_count", False):
             self.exp["lang_labels"] = describe_then_prescribe(
@@ -576,12 +572,17 @@ class DataCollector:
             # generalization
             mcs = int(math.ceil(math.log((lang_range[1]+1),base))+2)
             self.hyps["max_char_seq"] = mcs
+            self.hyps["STOP"] = self.hyps["numeral_base"]
+            self.hyps["lang_size"] += 1
         else:
             self.hyps["numeral_base"] = None
             self.hyps["max_char_seq"] = None
             self.hyps["lstm_lang"] = None
+            self.hyps["STOP"] = self.hyps["lang_size"]
+            self.hyps["lang_size"] += 1
         self.hyps["null_label"] = self.hyps["lang_size"]
         self.hyps["lang_size"] += 1 # For NULL prediction
+        self.hyps["lang_offset"] = 0
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
         self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
         self.validator.hyps["max_lang_targ"] = self.hyps["max_lang_targ"]
@@ -1167,7 +1168,9 @@ class ValidationRunner(Runner):
                     use_count_words=self.hyps["use_count_words"],
                     max_char_seq=self.hyps["max_char_seq"],
                     base=self.hyps["numeral_base"],
-                    null_label=self.hyps["null_label"]
+                    lang_offset=self.hyps["lang_offset"],
+                    null_label=self.hyps["null_label"],
+                    stop_label=self.hyps["STOP"]
                 )
                 if try_key(self.hyps, "pre_grab_count", False):
                     lang_labels = describe_then_prescribe(
@@ -1568,7 +1571,9 @@ class ValidationRunner(Runner):
                     use_count_words=self.hyps["use_count_words"],
                     base=self.hyps["numeral_base"],
                     max_char_seq=self.hyps["max_char_seq"],
-                    null_label=self.hyps["null_label"]
+                    lang_offset=self.hyps["lang_offset"],
+                    null_label=self.hyps["null_label"],
+                    stop_label=self.hyps["STOP"]
                 ).item()
                 print( "Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),

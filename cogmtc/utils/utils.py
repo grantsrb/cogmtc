@@ -6,6 +6,13 @@ import json
 import os
 import cv2
 
+INEQUALITY = 0
+ENGLISH = 1
+PIRAHA = 2
+RANDOM = 3
+DUPLICATES = 4
+NUMERAL = 5
+
 PIRAHA_WEIGHTS = {
         3:   torch.FloatTensor([.55, .45]),
         4:   torch.FloatTensor([.4, .6]),
@@ -316,7 +323,9 @@ def get_lang_labels(n_items,
                     use_count_words,
                     max_char_seq=1,
                     base=4,
-                    null_label=None):
+                    lang_offset=0,
+                    null_label=None,
+                    stop_label=None):
     """
     Determines the language labels based on the type of training.
 
@@ -335,9 +344,14 @@ def get_lang_labels(n_items,
             predict. Only matters when use_count_words is 5
         base: int
             the base of the number system if using NUMERAL models
+        lang_offset: int
+            the number of values that the labels should be offset by
         null_label: int or None
             if none, takes the value of 1+greatest possible label for
             use_count_words type
+        stop_label: int or None
+            if int, replaces base as the index to denote the end of
+            a NUMERAL sequence
     Returns:
         labels: torch Tensor (N,) or (N,M)
             returns tensor of shape (N,M) when use_count_words is 5
@@ -357,6 +371,12 @@ def get_lang_labels(n_items,
         #    labels = labels.reshape(-1, mcs)
         #    labels[idx] = null[idx]
         #    labels = labels.reshape(og_shape)
+        if stop_label is not None:
+            idx = labels==base
+            labels[idx] = stop_label
+            labels[~idx] += lang_offset
+        else:
+            labels += lang_offset
         return labels
 
     if int(use_count_words) == 1:
@@ -377,6 +397,7 @@ def get_lang_labels(n_items,
     elif int(use_count_words) == 4:
         if null_label is None: null_label = max_targ+1
         labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
+    labels += lang_offset
     return labels
 
 def get_numeral_labels(n_items,numeral_base=4,char_seq_len=4):
@@ -497,19 +518,19 @@ def describe_then_prescribe(arr, no_shifts):
     prescribe[idx] = arr[idx]
     return prescribe
 
-def convert_numeral_array_to_numbers(numerals, base):
+def convert_numeral_array_to_numbers(numerals, STOP):
     """
     converts a numeral array (representing a single number in any base)
     to a single number. i.e. the numeral array in base 4
-    [1, 3, 1, 4, -1] will be converted to [131]. Assumes the base is
-    the STOP token
+    [1, 3, 1, STOP, -1] will be converted to [131].
 
     Args:
         numerals: torch long tensor (..., B)
             the numeral array created from `get_numeral_labels`. The
             final non-negative character is ignored, all trailing
             negative charaters are ignored.
-        base: int
+        STOP: int
+            value of the stop token
     Returns:
         nums: torch float tensor (..., )
             the converted numbers
@@ -518,8 +539,8 @@ def convert_numeral_array_to_numbers(numerals, base):
     numerals[numerals<0] = 0
     nums = torch.zeros(numerals.shape[:-1])
     tens = torch.ones_like(nums)*10
-    exps = torch.argmax((numerals==base).long(),dim=-1)-1
-    numerals[numerals==base] = 0
+    exps = torch.argmax((numerals==STOP).long(),dim=-1)-1
+    numerals[numerals==STOP] = 0
     for i in range(numerals.shape[-1]):
         nums += (tens**exps)*numerals[...,i]
         exps -= 1

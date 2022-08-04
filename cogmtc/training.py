@@ -464,12 +464,19 @@ class Trainer:
                         masks=masks.to(DEVICE)
                     )
                 continue
+
+            # No teacher forcing by probability
+            p = try_key(self.hyps, "lang_teacher_p", 0.9)
+            if np.random.random() > p: inps = None
+            else: inps = labels.to(DEVICE)
+
             # model uses dones if it is recurrent
             logits, langs = model(
                 obs.to(DEVICE),
                 dones=dones.to(DEVICE),
                 tasks=tasks.to(DEVICE),
-                masks=masks.to(DEVICE)
+                masks=masks.to(DEVICE),
+                lang_inpts=inps
             )
 
             loss, losses, accs = get_loss_and_accs(
