@@ -1505,7 +1505,7 @@ class ValidationRunner(Runner):
             n_targs: int
                 the number of targets for the environment to display
             incl_hs: bool
-                if true, h vectors are collected from the model
+                if true, h and c vectors are collected from the model
             to_cpu: bool
                 if true, the langpreds and actnpreds are placed on
                 the cpu
@@ -1545,11 +1545,14 @@ class ValidationRunner(Runner):
                         with targets over the course of the episode.
                         only relevant if using a gordongames
                         environment variant
-                    incl_hs: bool
-                        if true, the returned data includes the hidden
-                        states of the model under the keys h0, h1, ...
-                        h vectors are collected after the model processes
-                        the current state
+                    hs: float tensor(s) (B,H)
+                        the hidden states of the model under the keys
+                        h0, h1, ...  h vectors are collected after the
+                        model processes the current state
+                    cs: float tensor(s) (B,H)
+                        the hidden states of the model under the keys
+                        c0, c1, ...  c vectors are collected after the
+                        model processes the current state
         """
         data = {
             "states":[],
@@ -1691,11 +1694,15 @@ class ValidationRunner(Runner):
             if hasattr(model, "hs"):
                 for i in range(len(model.hs)):
                     data["h"+str(i)] = []
+                    data["c"+str(i)] = []
             else:
                 data["h0"] = []
+                data["c0"] = []
             return
         if hasattr(model, "hs"):
             for i in range(len(model.hs)):
                 data["h"+str(i)].append(model.hs[i].cpu().detach().data)
+                data["c"+str(i)].append(model.cs[i].cpu().detach().data)
         else:
             data["h0"].append(model.h.cpu().detach().data)
+            data["c0"].append(model.c.cpu().detach().data)
