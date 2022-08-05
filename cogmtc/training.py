@@ -465,10 +465,20 @@ class Trainer:
                     )
                 continue
 
-            # No teacher forcing by probability
-            p = try_key(self.hyps, "lang_teacher_p", 0.9)
-            if np.random.random() > p: inps = None
-            else: inps = labels.to(DEVICE)
+            if try_key(self.hyps, "incl_lang_inpt", False):
+                # No teacher forcing by probability p
+                p = try_key(self.hyps, "lang_teacher_p", 0.9)
+                if np.random.random() > p: inps = None
+                else:
+                    # Set initial label to be STOP
+                    s = labels.shape
+                    if len(s)==3:
+                        stop_label = torch.zeros(s[0],1,s[2])
+                        stop_label[:,:,0] = self.hyps["STOP"]
+                    else:
+                        stop_label=torch.zeros(s[0],1)+self.hyps["STOP"]
+                    inps = torch.cat([stop_label,labels[:,:-1]],dim=1)
+                    inps = inps.to(DEVICE).long()
 
             # model uses dones if it is recurrent
             logits, langs = model(
