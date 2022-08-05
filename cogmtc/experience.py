@@ -587,6 +587,8 @@ class DataCollector:
         self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
         self.validator.hyps["max_lang_targ"] = self.hyps["max_lang_targ"]
         self.validator.hyps["null_label"] = self.hyps["null_label"]
+        self.validator.hyps["STOP"] = self.hyps["STOP"]
+        self.validator.hyps["lang_offset"] = self.hyps["lang_offset"]
         self.validator.hyps["lang_size"] = self.hyps["lang_size"]
         self.validator.hyps["max_steps"] = self.hyps["max_steps"]
         # Initialize Experience Replay
@@ -1206,10 +1208,10 @@ class ValidationRunner(Runner):
                     lang = avg.reshape(len(avg), -1, self.hyps["lang_size"])
                     lang = torch.argmax(lang, dim=-1) # (N,C)
                     lang = convert_numeral_array_to_numbers(
-                        lang.detach().cpu(), base=base
+                        lang.detach().cpu(), STOP=base
                     )
                     lang_labels = convert_numeral_array_to_numbers(
-                        lang_labels, base=base
+                        lang_labels, STOP=base
                     )
                 else:
                     lang = torch.argmax(avg, dim=-1) # (N,)

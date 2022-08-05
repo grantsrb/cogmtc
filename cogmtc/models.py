@@ -132,6 +132,7 @@ class Model(CoreModule):
         skip_lstm=False,
         max_char_seq=1,
         STOP=1,
+        null_idx=0,
         lstm_lang=False,
         incl_lang_inpt=True,
         incl_actn_inpt=False,
@@ -229,6 +230,9 @@ class Model(CoreModule):
             STOP: int
                 the index of the STOP token (if one exists). Only
                 necessary for NUMERAL type models.
+            null_idx: int
+                the index of the NULL token (if one exists). Only
+                necessary for NUMERAL type models.
             lstm_lang: bool
                 if you want to use an additional lstm to output the
                 language for numeral systems, set this to true. if false
@@ -303,6 +307,7 @@ class Model(CoreModule):
         self.seq_len = seq_len
         self.max_char_seq = max_char_seq
         self.STOP = STOP
+        self.null_idx = null_idx
         self.lstm_lang = lstm_lang
         if output_fxn is None: output_fxn = "NullOp"
         self.output_fxn = globals()[output_fxn]()
@@ -539,21 +544,6 @@ class NumeralLangLSTM(nn.Module):
 def identity(x, *args, **kwargs):
     return x
 
-"""
-TODO: create system to receive sequences of longs and process them
-      as embeddings. create way to mask inputs past the stop token.
-      probably want to argue stop token value at instantiation.
-
-      It probably would be good to also train these representations
-      to be directly decodable by the recurrent language output modules.
-
-      I think this approach will potentially make the model disregard
-      the visuals, though. So, to fix that, maybe it would be best
-      to alternate teacher forcing and model inputs. Or use pretty
-      aggresive regularization on the language inputs during training.
-      I think alternating the teacher forcing is probably the best
-      approach. This is going to be somewhat difficult to implement..
-"""
 class InptConsolidationModule(nn.Module):
     """
     This is a module to assist in converting the raw output from a
@@ -571,6 +561,7 @@ class InptConsolidationModule(nn.Module):
                        h_size=None,
                        max_char_seq=1,
                        STOP=1,
+                       null_idx=0,
                        drop_p=0,
                        *args,**kwargs):
         """
@@ -586,6 +577,9 @@ class InptConsolidationModule(nn.Module):
             STOP: int
                 index of stop token (if one exists). only matters if
                 max_char_seq is greater than 1
+            null_idx: int
+                index of NULL token (if one exists). only matters if
+                max_char_seq is greater than 1
             drop_p: float
         """
         super().__init__()
@@ -595,14 +589,15 @@ class InptConsolidationModule(nn.Module):
         self.mcs = 1 if max_char_seq is None or max_char_seq < 1\
                      else max_char_seq
         self.STOP = STOP
+        self.null_idx = null_idx
         self.drop_p = drop_p
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
             self.consolidator = nn.LSTMCell(self.h_size, self.h_size)
-            self.layernorm_h = nn.Layernorm(self.h_size)
-            self.layernorm_c = nn.Layernorm(self.h_size)
+            self.layernorm_h = nn.LayerNorm(self.h_size)
+            self.layernorm_c = nn.LayerNorm(self.h_size)
         else:
             self.consolidator = nn.Sequential(
                 nn.Linear(self.h_size, self.h_size),
@@ -662,22 +657,27 @@ class InptConsolidationModule(nn.Module):
         Returns:
             fx: torch tensor (B, H)
         """
+        x[x<0] = self.null_idx
+
         embs = self.embeddings(x)
         embs = self.dropout(embs)
-        if x.shape[1]==1:
+        if len(x.shape)==1:
+            outputs = self.consolidator(embs)
+        elif x.shape[1]==1:
             outputs = self.consolidator(embs[:,0])
         else:
             h = torch.zeros(len(x),self.h_size,device=x.get_device())
             c = torch.zeros(len(x),self.h_size,device=x.get_device())
             outputs = torch.zeros_like(h)
-            prev_idx = torch.zeros(len(x), device=x.get_device())
+            prev_idx = torch.zeros(len(x), device=x.get_device()).bool()
             for i in range(x.shape[1]):
                 h,c = self.consolidator(embs[:,i], (h,c))
                 h = self.layernorm_h(h)
                 c = self.layernorm_c(c)
-                idx = ~prev_idx&(x[:,i]==self.STOP)
-                outputs[idx] = h[idx]
-                prev_idx = prev_idx | idx
+                idx = ~prev_idx & (x[:,i]==self.STOP)
+                if torch.any(idx):
+                    outputs[idx] = h[idx]
+                    prev_idx = prev_idx | idx
         return self.proj(outputs)
 
 class NullModel(Model):
@@ -1266,7 +1266,6 @@ class VaryLSTM(Model):
         c = self.c*mask
         lang = self.lang*mask
         lang[dones.bool(),0] = self.STOP
-        print("partial reset:", lang)
         return h,c,lang
 
     def reset_to_step(self, step=0):
@@ -1442,8 +1441,7 @@ class LSTMOffshoot(VaryLSTM):
         cs = [c*mask for c in self.cs]
         lang = self.lang*mask
         lang[dones.bool(),0] = self.STOP
-        print("partial reset:", lang)
-        return h,c,lang
+        return hs,cs,lang
 
     def reset_to_step(self, step=0):
         """
@@ -1526,7 +1524,6 @@ class SymmetricLSTM(LSTMOffshoot):
         mask = mask.bool() # bool is important for using the mask as an
         # indexing tool
         device = self.get_device()
-        self.actn = self.actn.to(device)
         self.lang = self.lang.to(device)
         mask = mask.to(device)
         for i in range(self.n_lstms):
@@ -1617,7 +1614,7 @@ class SymmetricLSTM(LSTMOffshoot):
                 actns.append(torch.zeros_like(actns[-1]))
                 langs.append(torch.zeros_like(langs[-1]))
             else:
-                l = None if teacher_lang is None else teacher_langs[:,s]
+                l = None if lang_inpts is None else lang_inpts[:,s]
                 actn, lang = self.step(
                   x[:,s], cdtnl[tasks[:,s]], masks[:,s], l
                 )
