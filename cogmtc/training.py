@@ -60,7 +60,6 @@ def train(rank, hyps, verbose=True):
         data_collector.init_runner_procs(None)
     # Set initial phase
     data_collector.update_phase(try_key(hyps, "first_phase", 0))
-    data_collector.dispatch_runners()
     # Record experiment settings
     try:
         recorder = Recorder(hyps, model)
@@ -81,6 +80,7 @@ def train(rank, hyps, verbose=True):
         s = "\n\nBeginning First Phase: " + str(trainer.phase)
         recorder.write_to_log(s)
         print(s)
+        data_collector.dispatch_runners()
         # Loop training
         n_epochs = hyps["lang_epochs"] if first_phase==0 else\
                    hyps["actn_epochs"]
@@ -92,9 +92,10 @@ def train(rank, hyps, verbose=True):
             shared_model,
             verbose=verbose
         )
+        data_collector.await_runners()
+        data_collector.exp_replay.clear_experience()
     # Update phase accross training
     trainer.phase = hyps["second_phase"]
-    data_collector.await_runners()
     data_collector.update_phase(trainer.phase)
     data_collector.dispatch_runners()
     # Fresh optimizer
@@ -389,6 +390,8 @@ class Trainer:
             n_items = data["n_items"]
             n_targs = data["n_targs"]
             labels = data["lang_labels"]
+            tasks = data["tasks"]
+            masks = data["masks"]
 
             if self.phase == 0 and try_key(self.hyps,"blind_lang",False):
                 obs = torch.zeros_like(obs)
@@ -439,6 +442,8 @@ class Trainer:
                         print("labels:", labels[row,ii].cpu().numpy())
                         print("actns:", actns[row,ii].cpu().numpy())
                         print("isanim:", data["is_animating"][row,ii].cpu().numpy())
+                        print("masks:", masks[row,ii].cpu().numpy())
+                        print("tasks:", tasks[row,ii].cpu().numpy())
                         print()
                         time.sleep(1)
                         #plt.imshow(o.transpose((1,2,0)).squeeze())
@@ -448,18 +453,30 @@ class Trainer:
 
             # Resets to h value to appropriate step of last loop
             self.reset_model(model, len(obs))
-            if drops.sum() == 0 and self.phase != 1:
+            if (drops.sum() == 0 and self.phase != 1) \
+                                or masks.float().sum() == len(masks):
                 print("No drops in loop", i, "... continuing")
                 with torch.no_grad():
                     logits, langs = model(
                         obs.to(DEVICE),
-                        dones.to(DEVICE)
+                        dones=dones.to(DEVICE),
+                        tasks=tasks.to(DEVICE),
+                        masks=masks.to(DEVICE)
                     )
                 continue
+
+            # No teacher forcing by probability
+            p = try_key(self.hyps, "lang_teacher_p", 0.9)
+            if np.random.random() > p: inps = None
+            else: inps = labels.to(DEVICE)
+
             # model uses dones if it is recurrent
             logits, langs = model(
                 obs.to(DEVICE),
-                dones.to(DEVICE)
+                dones=dones.to(DEVICE),
+                tasks=tasks.to(DEVICE),
+                masks=masks.to(DEVICE),
+                lang_inpts=inps
             )
 
             loss, losses, accs = get_loss_and_accs(
@@ -469,6 +486,7 @@ class Trainer:
                 lang_preds=langs,
                 actn_targs=actns,
                 lang_targs=labels,
+                masks=masks,
                 drops=drops,
                 n_targs=n_targs,
                 n_items=n_items,
@@ -937,7 +955,7 @@ def hyps_error_catching(hyps):
         )
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
-    
+
     if "incl_lang_inpts" in hyps and "incl_lang_inpt" not in hyps:
         hyps["incl_lang_inpt"] = hyps["incl_lang_inpts"]
         print("Fixing plural mistake, incl_lang_inpts to incl_lang_inpt")
@@ -950,6 +968,4 @@ def hyps_error_catching(hyps):
     if "lstm_actn_inpt" in hyps and "incl_actn_inpt" not in hyps:
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
-
-
 

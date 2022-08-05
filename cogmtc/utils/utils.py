@@ -6,6 +6,13 @@ import json
 import os
 import cv2
 
+INEQUALITY = 0
+ENGLISH = 1
+PIRAHA = 2
+RANDOM = 3
+DUPLICATES = 4
+NUMERAL = 5
+
 PIRAHA_WEIGHTS = {
         3:   torch.FloatTensor([.55, .45]),
         4:   torch.FloatTensor([.4, .6]),
@@ -316,7 +323,9 @@ def get_lang_labels(n_items,
                     use_count_words,
                     max_char_seq=1,
                     base=4,
-                    null_label=None):
+                    lang_offset=0,
+                    null_label=None,
+                    stop_label=None):
     """
     Determines the language labels based on the type of training.
     null_labels are only applied to English and Duplicate variants
@@ -336,9 +345,14 @@ def get_lang_labels(n_items,
             predict. Only matters when use_count_words is 5
         base: int
             the base of the number system if using NUMERAL models
+        lang_offset: int
+            the number of values that the labels should be offset by
         null_label: int or None
             if none, takes the value of 1+greatest possible label for
             use_count_words type
+        stop_label: int or None
+            if int, replaces base as the index to denote the end of
+            a NUMERAL sequence
     Returns:
         labels: torch Tensor (N,) or (N,M)
             returns tensor of shape (N,M) when use_count_words is 5
@@ -358,6 +372,12 @@ def get_lang_labels(n_items,
         #    labels = labels.reshape(-1, mcs)
         #    labels[idx] = null[idx]
         #    labels = labels.reshape(og_shape)
+        if stop_label is not None:
+            idx = labels==base
+            labels[idx] = stop_label
+            labels[~idx] += lang_offset
+        else:
+            labels += lang_offset
         return labels
 
     if int(use_count_words) == 1:
@@ -378,6 +398,7 @@ def get_lang_labels(n_items,
     elif int(use_count_words) == 4:
         if null_label is None: null_label = max_targ+1
         labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
+    labels += lang_offset
     return labels
 
 def get_numeral_labels(n_items,numeral_base=4,char_seq_len=4):
@@ -534,18 +555,19 @@ def describe_then_prescribe(arr, no_shifts):
     prescribe[idx] = arr[idx]
     return prescribe
 
-def convert_numeral_array_to_numbers(numerals, base):
+def convert_numeral_array_to_numbers(numerals, STOP):
     """
     converts a numeral array (representing a single number in any base)
     to a single number. i.e. the numeral array in base 4
-    [1, 3, 1, 4, -1] will be converted to [131].
+    [1, 3, 1, STOP, -1] will be converted to [131].
 
     Args:
         numerals: torch long tensor (..., B)
             the numeral array created from `get_numeral_labels`. The
             final non-negative character is ignored, all trailing
             negative charaters are ignored.
-        base: int
+        STOP: int
+            value of the stop token
     Returns:
         nums: torch float tensor (..., )
             the converted numbers
@@ -554,12 +576,12 @@ def convert_numeral_array_to_numbers(numerals, base):
     numerals[numerals<0] = 0
     nums = torch.zeros(numerals.shape[:-1])
     tens = torch.ones_like(nums)*10
-    exps = torch.argmax((numerals==base).long(),dim=-1)-1
-    numerals[numerals==base] = 0
+    exps = torch.argmax((numerals==STOP).long(),dim=-1)-1
+    numerals[numerals==STOP] = 0
     for i in range(numerals.shape[-1]):
         nums += (tens**exps)*numerals[...,i]
         exps -= 1
-    return nums
+    return torch.round(nums)
 
 def get_loss_and_accs(phase,
                       actn_preds,
@@ -570,6 +592,7 @@ def get_loss_and_accs(phase,
                       n_targs,
                       n_items,
                       use_count_words,
+                      masks=None,
                       prepender="",
                       loss_fxn=F.cross_entropy,
                       lang_p=0.5,
@@ -596,8 +619,13 @@ def get_loss_and_accs(phase,
         lang_targs: torch LongTensor (B,S)
             language labels
         drops: torch LongTensor (B,S)
-            1s denote steps in which the agent dropped an item, 0s
+            Ones denote steps in which the agent dropped an item, 0s
             denote all other steps
+        masks: torch LongTensor or BoolTensor (B,S)
+            Used to remove padding from the loss calculations.
+            Ones denote locations that should be ignored. 0s denote
+            locations that should be included. Be careful, this is
+            the opposite of the drops.
         n_targs: torch LongTensor (B,S)
             the number of target objects on the grid at this step
             of the episode
@@ -631,12 +659,14 @@ def get_loss_and_accs(phase,
                 the appropriate label accuracies depending on the
                 phase
     """
+    if masks is None: masks = torch.zeros_like(n_targs)
     actn_preds = actn_preds.reshape(-1, actn_preds.shape[-1])
     if loss_fxn == F.mse_loss:
         actn_targs = actn_targs.reshape(-1, actn_targs.shape[-1])
     else:
         actn_targs = actn_targs.reshape(-1)
     drops = drops.reshape(-1)
+    masks = masks.reshape(-1)
     n_targs = n_targs.reshape(-1)
     n_items = n_items.reshape(-1)
     # Phase 0: language labels when agent drops an item
@@ -650,6 +680,7 @@ def get_loss_and_accs(phase,
             lang_preds,
             lang_targs,
             drops, # determines what timesteps to train language
+            masks=masks,
             categories=n_items,
             prepender=prepender,
             lang_size=lang_size,
@@ -661,16 +692,22 @@ def get_loss_and_accs(phase,
         actn_loss, actn_accs = calc_actn_loss_and_accs(
             actn_preds,
             actn_targs,
-            n_targs,
-            loss_fxn,
-            prepender
+            n_targs=n_targs,
+            masks=masks,
+            loss_fxn=loss_fxn,
+            prepender=prepender
         )
         losses[prepender+"_actn_loss"] = actn_loss.item()
         p = lang_p if phase == 2 else 0
         loss = p*loss + (1-p)*actn_loss
     return loss, losses, {**actn_accs, **lang_accs}
 
-def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
+def calc_actn_loss_and_accs(logits,
+                            targs,
+                            n_targs,
+                            masks,
+                            loss_fxn,
+                            prepender):
     """
     Args:
         logits: torch FloatTensor (B*S,A)
@@ -680,6 +717,10 @@ def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
         n_targs: torch LongTensor (B*S,) or torch FloatTensor (B*S,A)
             the number of target objects on the grid at this step
             of the episode
+        masks: torch LongTensor (B,S)
+            Used to remove indices from the loss calculations.
+            Ones denote locations that should be ignored. 0s denote
+            locations that should be included.
         loss_fxn: torch Module
             the loss function to calculate the loss. i.e.
             torch.nn.CrossEntropyLoss()
@@ -693,7 +734,9 @@ def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
             vals: float
                 accuracies
     """
-    targs = targs.to(DEVICE)
+    idxs = (masks==0)
+    targs = targs[idxs].to(DEVICE)
+    logits = logits[idxs]
     loss = loss_fxn(logits.squeeze(), targs.squeeze())
     actn_accs = {}
     if loss_fxn == F.cross_entropy:
@@ -701,7 +744,7 @@ def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
             actn_accs = calc_accs( # accs is a dict of floats
                 logits=logits,
                 targs=targs,
-                categories=n_targs,
+                categories=n_targs[idxs],
                 prepender=prepender+"_actn"
             )
     return loss, actn_accs
@@ -709,6 +752,7 @@ def calc_actn_loss_and_accs(logits,targs,n_targs,loss_fxn,prepender):
 def calc_lang_loss_and_accs(preds,
                             labels,
                             drops,
+                            masks,
                             categories,
                             lang_size=None,
                             use_count_words=None,
@@ -728,6 +772,10 @@ def calc_lang_loss_and_accs(preds,
         drops: torch LongTensor (B*S,)
             1s denote steps in which the agent dropped an item, 0s
             denote all other steps
+        masks: torch LongTensor (B*S)
+            Used to remove indices from the loss calculations.
+            Ones denote locations that should be ignored. 0s denote
+            locations that should be included.
         categories: torch long tensor (B*S,) or None
             if None, this value is ignored. Otherwise it specifies
             categories for accuracy calculations.
@@ -764,9 +812,11 @@ def calc_lang_loss_and_accs(preds,
         n = labels.shape[0]//drops.shape[0]
         drops = drops.repeat_interleave(n)
         categories = categories.repeat_interleave(n)
-    idxs = (drops==1)&(labels>=0)
+        masks = masks.repeat_interleave(n)
+    dmasks = (drops==1)&(masks==0)
+    idxs = dmasks&(labels>=0)
     null_idxs = None
-    if use_count_words==5: null_idxs = (drops==1)&(labels<0)
+    if use_count_words==5: null_idxs = dmasks&(labels<0)
     categories = categories[idxs]
     labels = labels[idxs].to(DEVICE)
     loss = 0
@@ -971,4 +1021,373 @@ def max_one_hot(tensor, dim=-1):
     mask = torch.zeros_like(tensor).scatter_(-1, args, torch.ones_like(tensor))
     #mask = (tensor==torch.gather(tensor, -1, args)).float()
     return mask
+
+def get_hook(layer_dict, key, to_numpy=True, to_cpu=False):
+    """
+    Returns a hook function that can be used to collect gradients
+    or activations in the backward or forward pass respectively of
+    a torch Module.
+
+    Args:
+        layer_dict: dict
+            Can be empty
+
+            keys: str
+                names of model layers of interest
+            vals: NA
+        key: str
+            name of layer of interest
+        to_numpy: bool
+            if true, the gradients/activations are returned as ndarrays.
+            otherwise they are returned as torch tensors
+    Returns:
+        hook: function
+            a function that works as a torch hook
+    """
+    if to_numpy:
+        def hook(module, inp, out):
+            layer_dict[key] = out.detach().cpu().numpy()
+    elif to_cpu:
+        def hook(module, inp, out):
+            layer_dict[key] = out.cpu()
+    else:
+        def hook(module, inp, out):
+            layer_dict[key] = out
+    return hook
+
+def inspect(model, X, insp_keys=set(), batch_size=500, to_numpy=True,
+                                                      to_cpu=True,
+                                                      no_grad=False,
+                                                      verbose=False):
+    """
+    Get the response from the argued layers in the model as np arrays.
+    If model is on cpu, operations are performed on cpu. Put model on
+    gpu if you desire operations to be performed on gpu.
+
+    Args:
+        model - torch Module or torch gpu Module
+        X - ndarray or FloatTensor (T,C,H,W)
+        insp_keys - set of str
+            name of layers activations to collect. if empty set, only
+            the final output is returned.
+        to_numpy - bool
+            if true, activations will all be ndarrays. Otherwise torch
+            tensors
+        to_cpu - bool
+            if true, torch tensors will be on the cpu.
+            only effective if to_numpy is false.
+        no_grad: bool
+            if true, gradients will not be calculated. if false, has
+            no impact on function.
+
+    returns: 
+        layer_outs: dict of np arrays or torch cpu tensors
+            "outputs": default key for output layer
+    """
+    layer_outs = dict()
+    handles = []
+    insp_keys_copy = set()
+    for key, mod in model.named_modules():
+        if key in insp_keys:
+            insp_keys_copy.add(key)
+            hook = get_hook(layer_outs, key, to_numpy=to_numpy,
+                                                 to_cpu=to_cpu)
+            handle = mod.register_forward_hook(hook)
+            handles.append(handle)
+    if len(set(insp_keys)-insp_keys_copy) > 0:
+        print("Insp keys:", insp_keys-insp_keys_copy, "not found")
+    insp_keys = insp_keys_copy
+    if not isinstance(X,torch.Tensor):
+        X = torch.FloatTensor(X)
+
+    # prev_grad_state is used to ensure we do not mess with an outer
+    # "with torch.no_grad():" statement
+    prev_grad_state = torch.is_grad_enabled() 
+    if to_numpy or no_grad:
+        # Turns off all gradient calculations. When returning numpy
+        # arrays, the computation graph is inaccessible, as such we
+        # do not need to calculate it.
+        torch.set_grad_enabled(False)
+
+    try:
+        if batch_size is None or batch_size > len(X):
+            if next(model.parameters()).is_cuda:
+                X = X.to(DEVICE)
+            preds = model(X)
+            if to_numpy:
+                layer_outs['outputs'] = preds.detach().cpu().numpy()
+            else:
+                layer_outs['outputs'] = preds.cpu()
+        else:
+            use_cuda = next(model.parameters()).is_cuda
+            batched_outs = {key:[] for key in insp_keys}
+            outputs = []
+            rnge = range(0,len(X), batch_size)
+            if verbose:
+                rnge = tqdm(rnge)
+            for batch in rnge:
+                x = X[batch:batch+batch_size]
+                if use_cuda:
+                    x = x.to(DEVICE)
+                preds = model(x).cpu()
+                if to_numpy:
+                    preds = preds.detach().numpy()
+                outputs.append(preds)
+                for k in layer_outs.keys():
+                    batched_outs[k].append(layer_outs[k])
+                    layer_outs[k] = None
+            batched_outs['outputs'] = outputs
+            if to_numpy:
+                layer_outs = {k:np.concatenate(v,axis=0) for k,v in\
+                                               batched_outs.items()}
+            else:
+                layer_outs = {k:torch.cat(v,dim=0) for k,v in\
+                                         batched_outs.items()}
+    except RuntimeError as e:
+        print("Runtime error. Check your batch size and try using",
+                "inspect with torch.no_grad() enabled")
+        raise RuntimeError(str(e))
+
+        
+    # If we turned off the grad state, this will turn it back on.
+    # Otherwise leaves it the same.
+    torch.set_grad_enabled(prev_grad_state) 
+    
+    # This for loop ensures we do not create a memory leak when
+    # using hooks
+    for i in range(len(handles)):
+        handles[i].remove()
+    del handles
+
+    return layer_outs
+
+def get_stim_grad(model, X, layer, cell_idx, batch_size=500,
+                                           layer_shape=None,
+                                           to_numpy=True,
+                                           ret_resps=False,
+                                           verbose=True):
+    """
+    Gets the gradient of the model output at the specified layer and
+    cell idx with respect to the inputs (X). Returns a gradient array
+    with the same shape as X.
+
+    Args:
+        model: nn.Module
+        X: torch FloatTensor
+        layer: str
+        cell_idx: int or tuple (chan, row, col)
+            idx of cell (channel) of interest
+        batch_size: int
+            size of batching for calculations
+        layer_shape: tuple of ints (chan, row, col)
+            changes the shape of the argued layer to this shape if tuple
+        to_numpy: bool
+            returns the gradient vector as a numpy array if true
+        ret_resps: bool
+            if true, also returns the model responses
+    Returns:
+        grad: torch tensor or ndarray (same shape as X)
+            the gradient of the output cell with respect to X
+    """
+    if verbose:
+        print("layer:", layer)
+    requires_grad(model, False)
+    cud = next(model.parameters()).is_cuda
+    device = torch.device('cuda:0') if cud else torch.device('cpu')
+    prev_grad_state = torch.is_grad_enabled() 
+    torch.set_grad_enabled(True)
+
+    if model.recurrent:
+        batch_size = 1
+        hs = [torch.zeros(batch_size, *h_shape).to(device) for\
+                                     h_shape in model.h_shapes]
+
+    if layer == 'output' or layer=='outputs':
+        layer = "sequential."+str(len(model.sequential)-1)
+    hook_outs = dict()
+    module = None
+    for name, modu in model.named_modules():
+        if name == layer:
+            if verbose:
+                print("hook attached to " + name)
+            module = modu
+            hook = get_hook(hook_outs,key=layer,to_numpy=False)
+            hook_handle = module.register_forward_hook(hook)
+
+    # Get gradient with respect to activations
+    if type(X) == type(np.array([])):
+        X = torch.FloatTensor(X)
+    X.requires_grad = True
+    resps = []
+    n_loops = X.shape[0]//batch_size
+    rng = range(n_loops)
+    if verbose:
+        rng = tqdm(rng)
+    for i in rng:
+        idx = i*batch_size
+        x = X[idx:idx+batch_size].to(device)
+        if model.recurrent:
+            resp, hs = model(x, hs)
+            hs = [h.data for h in hs]
+        else:
+            resp = model(x)
+        if layer_shape is not None:
+            n_samps = len(hook_outs[layer])
+            hook_outs[layer] = hook_outs[layer].reshape(n_samps,
+                                                        *layer_shape)
+        # Outs are the activations at the argued layer and cell idx
+        # for the batch
+        if type(cell_idx) == type(int()):
+            fx = hook_outs[layer][:,cell_idx]
+        elif len(cell_idx) == 1:
+            fx = hook_outs[layer][:,cell_idx[0]]
+        else:
+            fx = hook_outs[layer][:, cell_idx[0], cell_idx[1],
+                                                  cell_idx[2]]
+        fx = fx.sum()
+        fx.backward()
+        resps.append(resp.data.cpu())
+    hook_handle.remove()
+    requires_grad(model, True)
+    torch.set_grad_enabled(prev_grad_state) 
+    grad = X.grad.data.cpu()
+    resps = torch.cat(resps,dim=0)
+    if to_numpy:
+        grad = grad.numpy()
+        resps = resps.numpy()
+    if ret_resps:
+        return grad, resps
+    return grad
+
+def integrated_gradient(model, X, layer='sequential.2', chans=None,
+                                                    spat_idx=None,
+                                                    alpha_steps=10,
+                                                    batch_size=500,
+                                                    y=None,
+                                                    lossfxn=None,
+                                                    to_numpy=False,
+                                                    verbose=False):
+    """
+    Returns the integrated gradient for a particular stimulus at the
+    argued layer. This function always operates with the model in
+    eval mode due to the need for a deterministic model. If the model
+    is argued in train mode, it is set to eval mode for this function
+    and returned to train mode at the end of the function. As such,
+    this note is largely irrelavant, but will hopefully satisfy the
+    curious or anxious ;)
+
+    Inputs:
+        model: PyTorch Deep Retina models
+        X: Input stimuli ndarray or torch FloatTensor (T,D,H,W)
+        layer: str layer name
+        chans: int or list of ints or None
+            the channels of interest. if None, uses all channels
+        spat_idx: tuple of ints (row, col)
+            the row and column of interest. if None, the spatial
+            location of the recordings is used for each channel.
+        alpha_steps: int, integration steps
+        batch_size: step size when performing computations on GPU
+        y: torch FloatTensor or ndarray (T,N)
+            if None, ignored
+        lossfxn: some differentiable function
+            if None, ignored
+    Outputs:
+        intg_grad: ndarray or FloatTensor (T, C, H1, W1)
+            integrated gradient
+        gc_activs: ndarray or FloatTensor (T,N)
+            activation of the final layer of the model
+    """
+    # Handle Gradient Settings
+    # Model gradient unnecessary for integrated gradient
+    requires_grad(model, False)
+
+    # Save current grad calculation state
+    prev_grad_state = torch.is_grad_enabled()
+    torch.set_grad_enabled(True) # Enable grad calculations
+    prev_train_state = model.training
+    model.eval()
+
+    layer_idx = get_layer_idx(model, layer=layer)
+    shape = model.get_shape(X.shape[-2:], layer)
+    intg_grad = torch.zeros(len(X), model.chans[layer_idx],*shape)
+    gc_activs = None
+    model.to(DEVICE)
+
+    if chans is None:
+        chans = list(range(model.n_units))
+    elif isinstance(chans,int):
+        chans = [chans]
+
+    # Handle convolutional Ganglion Cell output by replacing GrabUnits
+    # coordinates for desired cell
+    prev_coords = None
+    if spat_idx is not None:
+        if isinstance(spat_idx, int): spat_idx = (spat_idx, spat_idx)
+        row, col = spat_idx
+        mod_idx = get_module_idx(model, GrabUnits)
+        assert mod_idx >= 0, "not yet compatible with one-hot models"
+        grabber = model.sequential[mod_idx]
+        prev_coords = grabber.coords.clone()
+        for chan in chans:
+            grabber.coords[chan,0] = row
+            grabber.coords[chan,1] = col
+    if batch_size is None:
+        batch_size = len(X)
+    if not isinstance(X, torch.Tensor):
+        X = torch.FloatTensor(X)
+    X.requires_grad = True
+    idxs = torch.arange(len(X)).long()
+    for batch in range(0, len(X), batch_size):
+        prev_response = None
+        linspace = torch.linspace(0,1,alpha_steps)
+        if verbose:
+            print("Calculating for batch {}/{}".format(batch, len(X)))
+            linspace = tqdm(linspace)
+        idx = idxs[batch:batch+batch_size]
+        for alpha in linspace:
+            x = alpha*X[idx]
+            # Response is dict of activations. response[layer] has
+            # shape intg_grad.shape
+            response = inspect(model, x, insp_keys=[layer],
+                                           batch_size=None,
+                                           to_numpy=False,
+                                           to_cpu=False,
+                                           no_grad=False,
+                                           verbose=False)
+            if prev_response is not None:
+                ins = response[layer]
+                outs = response['outputs'][:,chans]
+                if lossfxn is not None and y is not None:
+                    truth = y[idx][:,chans]
+                    outs = lossfxn(outs,truth)
+                grad = torch.autograd.grad(outs.sum(), ins)[0]
+                grad = grad.data.detach().cpu()
+                grad = grad.reshape(len(grad), *intg_grad.shape[1:])
+                l = layer
+                act = (response[l].data.cpu()-prev_response[l])
+                act = act.reshape(grad.shape)
+                intg_grad[idx] += grad*act
+                if alpha == 1:
+                    if gc_activs is None:
+                        gc_activs = torch.zeros(len(X),len(chans))
+                    outs = response['outputs'][:,chans]
+                    gc_activs[idx] = outs.data.cpu()
+            prev_response={k:v.data.cpu() for k,v in response.items()}
+    del response
+    del grad
+    if len(gc_activs.shape) == 1:
+        gc_activs = gc_activs.unsqueeze(1) # Create new axis
+
+    if prev_coords is not None:
+        grabber.coords = prev_coords
+    # Return to previous gradient calculation state
+    requires_grad(model, True)
+    # return to previous grad calculation state and training state
+    torch.set_grad_enabled(prev_grad_state)
+    if prev_train_state: model.train()
+    if to_numpy:
+        ndgrad = intg_grad.data.cpu().numpy()
+        ndactivs = gc_activs.data.cpu().numpy()
+        return ndgrad, ndactivs
+    return intg_grad, gc_activs
 
