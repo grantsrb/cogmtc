@@ -479,6 +479,10 @@ class Trainer:
                         stop_label=torch.zeros(s[0],1)+self.hyps["STOP"]
                     inps = torch.cat([stop_label,labels[:,:-1]],dim=1)
                     inps = inps.to(DEVICE).long()
+                    if try_key(self.hyps,"shuffle_lang_inpts",False):
+                        s = inps.shape
+                        perm = torch.randperm(int(np.prod(s))).long()
+                        inps = inps.reshape(-1)[perm].reshape(s)
 
             # model uses dones if it is recurrent
             logits, langs = model(

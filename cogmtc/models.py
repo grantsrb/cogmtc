@@ -1614,9 +1614,9 @@ class SymmetricLSTM(LSTMOffshoot):
                 actns.append(torch.zeros_like(actns[-1]))
                 langs.append(torch.zeros_like(langs[-1]))
             else:
-                l = None if lang_inpts is None else lang_inpts[:,s]
+                lang_inpt=None if lang_inpts is None else lang_inpts[:,s]
                 actn, lang = self.step(
-                  x[:,s], cdtnl[tasks[:,s]], masks[:,s], l
+                  x[:,s], cdtnl[tasks[:,s]], masks[:,s], lang_inpt
                 )
                 actns.append(actn.unsqueeze(1))
                 lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
