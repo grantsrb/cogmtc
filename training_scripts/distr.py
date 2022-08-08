@@ -113,6 +113,8 @@ def split_ranges(meta):
         if combos is not None:
             del combos["search_keys"]
             range_dict[d] = { "combos": combos }
+            for k in combos:
+                combos[k] = list(reversed(combos[k]))
         else:
             del range_dict[d]
             del devices[i]
