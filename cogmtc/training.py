@@ -465,11 +465,11 @@ class Trainer:
                     )
                 continue
 
+            inps = None
             if try_key(self.hyps, "incl_lang_inpt", False):
                 # No teacher forcing by probability p
                 p = try_key(self.hyps, "lang_teacher_p", 0.9)
-                if np.random.random() > p: inps = None
-                else:
+                if np.random.random() < p:
                     # Set initial label to be STOP
                     s = labels.shape
                     if len(s)==3:
