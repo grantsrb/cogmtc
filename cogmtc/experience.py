@@ -1678,7 +1678,11 @@ class ValidationRunner(Runner):
                 for i in range(len(model.hs)):
                     k = "h"+str(i)
                     data[k] = torch.cat(data[k], dim=0)
-            else: data["h0"] = torch.cat(data["h0"], dim=0)
+                    k = "c"+str(i)
+                    data[k] = torch.cat(data[k], dim=0)
+            else:
+                data["h0"] = torch.cat(data["h0"], dim=0)
+                data["c0"] = torch.cat(data["c0"], dim=0)
         return data
 
     def record_hs(self, model, data):
