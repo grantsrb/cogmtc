@@ -401,6 +401,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
 
     "oracle_type": str
         the name of the class to use for the oracle. i.e. "GordonOracle"
+    "drop_grad": float (between 0 and 1)
+        the probability of dropping gradient values. higher values means
+        more dropout. This is applied to all model parameters after
+        every backward pass before the optimizer update step.
     "optim_type": str
         the name of the class to use for the optimizer. i.e. "Adam"
     "factor": float

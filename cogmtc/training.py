@@ -517,6 +517,12 @@ class Trainer:
             )
             # Backprop and update
             loss.backward()
+            if try_key(self.hyps, "drop_grad", 0) > 0:
+                drop_p = self.hyps["drop_grad"]
+                for p in model.parameters():
+                    if hasattr(p.grad, "data"):
+                        drop_mask = torch.rand_like(p.grad.data)<drop_p
+                        p.grad.data[drop_mask] = 0
             self.optim.step()
             # Calc acc
             # Record metrics

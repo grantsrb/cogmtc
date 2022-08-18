@@ -90,6 +90,7 @@
     "val_max_actn": false,
     "n_eval_eps": 10,
 
+    "drop_grad": 0,
     "optim_type": "RMSprop",
     "factor": 0.9,
     "patience": 10,
