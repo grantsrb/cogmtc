@@ -142,6 +142,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.inpt_shape = self.hyps["inpt_shape"]
         self.seq_len    = self.hyps["seq_len"]
         self.randomize_order = self.hyps["randomize_order"]
+        self.rand_seq_len = try_key(self.hyps, "rand_seq_len", False)
 
         # Hold outs are used in the get_drops function as a way
         # to determine if a word should ever be trained on. 
@@ -283,15 +284,18 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     tasks: torch long tensor (N, S)
         """
         raw_len = self.exp_len - self.seq_len + 1
+        seq_len = self.seq_len
         if not self.roll_data:
             idx = idx*self.seq_len
             raw_len = self.exp_len
+        elif self.rand_seq_len and seq_len > 7:
+            seq_len = int(np.random.randint(7, seq_len+1))
 
         bstartx = int(idx/raw_len)*self.bsize
         bendx  = bstartx+self.bsize
 
         startx = idx-int(idx/raw_len)*raw_len
-        endx   = startx+self.seq_len
+        endx   = startx+seq_len
 
         data = dict()
         for key in self.exp.keys():
@@ -1074,6 +1078,7 @@ class ValidationRunner(Runner):
         self.hyps["hold_lang"] = None
         self.hyps["hold_actns"] = None
         self.hyps["hold_outs"] = set()
+        self.hyps["rand_timing"] = False
         print("Validation runner target range:",self.hyps["targ_range"])
         self.phase = phase
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
@@ -1505,6 +1510,7 @@ class ValidationRunner(Runner):
             "is_animating":[],
             "ep_idx":[],
         }
+        self.hyps["rand_timing"] = False
         state = self.create_new_env(
             n_targs=n_targs,
             env_type=env_type

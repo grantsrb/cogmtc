@@ -348,6 +348,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "seq_len": int
         the number of consecutive frames to feed into the model for
         a single batch of data
+    "rand_seq_len": bool
+        if true and roll_data is true, the sequence length is sampled
+        uniformly from 7 to the argued `seq_len`.
     "exp_len": int
         the "experience" length for a single rollout. This is the
         number of steps to take in the environment for a single row

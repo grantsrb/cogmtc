@@ -16,9 +16,9 @@ $ python3 record_model.py exp_name/model_folder/
 """
 
 n_episodes = 1 # Set this to longer to get more unique game xp
-repeat = 6 # Set this to longer to linger on images longer
+repeat = 4 # Set this to longer to linger on images longer
 fps = 2
-targ_range = (1,5) # max not inclusive
+targ_range = [1,10] # max not inclusive
 
 if __name__ == "__main__":
     if not os.path.exists("./vids/"): os.mkdir("vids/")
@@ -30,6 +30,7 @@ if __name__ == "__main__":
     )
     hyps = checkpt["hyps"]
     hyps["n_eval_eps"] = n_episodes
+    if targ_range is None: targ_range = hyps["val_targ_range"]
     hyps["val_targ_range"] = targ_range
     model = globals()[hyps["model_type"]](**hyps).cuda()
     model.load_state_dict(checkpt["state_dict"])
@@ -45,12 +46,15 @@ if __name__ == "__main__":
     for n_targs in range(*targ_range):
         model.reset()
         data = val_runner.collect_data(
-            model, n_targs=None, env_type=env_type
+            model, n_targs=n_targs, env_type=env_type, n_eps=n_episodes
         )
         if all_data is None:
             all_data = data
         else:
-            all_data["states"] = np.concatenate([all_data["states"], data["states"]], axis=0)
+            all_data["states"] = np.concatenate(
+                [all_data["states"], data["states"]],
+                axis=0
+            )
     data = all_data
     torch.cuda.empty_cache()
 

@@ -453,6 +453,9 @@ class Trainer:
 
             # Resets to h value to appropriate step of last loop
             self.reset_model(model, len(obs))
+
+            # If no drops exist during phase 0, no point in carrying out
+            # the backprop loop
             if (drops.sum() == 0 and self.phase != 1) \
                                 or masks.float().sum() == len(masks):
                 print("No drops in loop", i, "... continuing")
