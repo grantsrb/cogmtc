@@ -1,6 +1,7 @@
 from cogmtc.experience import DataCollector
 import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
+from cogmtc.envs import NONVERBAL_TASK_NAMES
 from cogmtc.utils.save_io import load_checkpoint
 from cogmtc.utils.utils import try_key, get_loss_and_accs
 from cogmtc.utils.training import get_resume_checkpt
@@ -139,7 +140,13 @@ def make_model(hyps):
     elif init_checkpt is not None and init_checkpt.strip()!="":
         print("Initializing from checkpoint", init_checkpt)
         checkpt = load_checkpoint(init_checkpt)
-        model.load_state_dict(checkpt["state_dict"])
+        try:
+            model.load_state_dict(checkpt["state_dict"])
+        except:
+            sd = checkpt["state_dict"]
+            sd["cdtnl_idxs"] = model.state_dict()["cdtnl_idxs"]
+            sd["cnn.cdtnl_idxs"] = model.state_dict()["cnn.cdtnl_idxs"]
+            model.load_state_dict(sd)
     elif lang_checkpt is not None and lang_checkpt.strip()!="":
         print("Loading language model", lang_checkpt)
         print("Training will skip to second phase")
@@ -978,6 +985,13 @@ def hyps_error_catching(hyps):
         )
         hyps["batch_size"] = (hyps["batch_size"]//hyps["n_envs"])*hyps["n_envs"]
         print("Changing batch_size to", hyps["batch_size"])
+
+    for env_type in hyps["env_types"]:
+        if env_type in NONVERBAL_TASK_NAMES:
+            hyps["targ_range"] = [2,2]
+            hyps["val_targ_range"] = [1,3]
+            print("Non verbal task, setting targ range to", hyps["targ_range"])
+            break
 
     if "incl_lang_inpts" in hyps and "incl_lang_inpt" not in hyps:
         hyps["incl_lang_inpt"] = hyps["incl_lang_inpts"]

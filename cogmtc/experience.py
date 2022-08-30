@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.multiprocessing as mp
 import numpy as np
 import cogmtc.models as models
-from cogmtc.envs import SequentialEnvironment
+from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL
 
@@ -348,7 +348,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
             raise StopIteration
 
     @staticmethod
-    def get_drops(hyps, n_items, is_animating, dones):
+    def get_drops(hyps, n_items,
+                        is_animating,
+                        dones):
         """
         Returns a tensor denoting steps in which the agent dropped an
         item. This always means that the player is still on the item
@@ -487,7 +489,7 @@ class DataCollector:
         self.n_envs = len(hyps["env_types"])
         hyps["batch_size"]=(hyps["batch_size"]//self.n_envs)*self.n_envs
         hyps["env2idx"] = {k:i for i,k in enumerate(hyps["env_types"])}
-    
+
         self.hyps = hyps
 
         # Handle data sizes differently if Transformer model type
@@ -1152,15 +1154,15 @@ class ValidationRunner(Runner):
         model.eval()
 
         # Reset every on every validation run
+        self.hyps["seed"] = self.seed
+        avg_acc = 0
+        avg_loss = 0
         rainj = range(
             self.hyps["targ_range"][0],
             self.hyps["targ_range"][1]+1
         )
         if self.hyps["exp_name"] == "test":
             rainj = range(2,6)
-        self.hyps["seed"] = self.seed
-        avg_acc = 0
-        avg_loss = 0
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
@@ -1285,7 +1287,7 @@ class ValidationRunner(Runner):
         if idxs.float().sum() <= 1: return # ensure some data to record
 
         lang = data["lang_preds"]
-        inpts["pred"] = lang[idxs]
+        inpts["pred"]  = lang[idxs]
         inpts["label"] = labels[idxs]
         inpts["n_targs"] = data["n_targs"][idxs]
         inpts["n_items"] = data["n_items"][idxs]
