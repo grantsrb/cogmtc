@@ -1281,16 +1281,14 @@ class VaryLSTM(Model):
         if self.learn_h:
             d = dones.bool()
             m = mask[:,0].bool()
-
             h = torch.empty_like(self.h)
-            h[d] = self.h_init
-            h[m] = self.h[m]
-
             c = torch.empty_like(self.c)
-            c[d] = self.c_init
-            c[m] = self.c[m]
-            #h = self.h*mask + self.h_init.repeat(len(self.h), 1)*dones
-            #c = self.c*mask + self.c_init.repeat(len(self.h), 1)*dones
+            if torch.any(d):
+                h[d] = self.h_init
+                c[d] = self.c_init
+            if torch.any(m):
+                h[m] = self.h[m]
+                c[m] = self.c[m]
         else:
             h = self.h*mask
             c = self.c*mask
@@ -1404,6 +1402,25 @@ class LSTMOffshoot(VaryLSTM):
     """
     Class to share functions between DoubleVaryLSTM and SymmetricLSTM
     """
+    def get_inits(self):
+        """
+        Assists in creating the h and c initialization parameter lists.
+        """
+        sqr = self.h_size**2
+        self.h_inits = [
+            torch.randn(1,self.h_size)/sqr for _ in range(self.n_lstms)
+        ]
+        self.h_inits = nn.ParameterList(
+            [nn.Parameter(h) for h in self.h_inits]
+        )
+
+        self.c_inits = [
+            torch.randn(1,self.h_size)/sqr for _ in range(self.n_lstms)
+        ]
+        self.c_inits = nn.ParameterList(
+            [nn.Parameter(c) for c in self.c_inits]
+        )
+
     def get_vector_list(self, n, bsize, vsize, inits=None):
         """
         Returns a list of vectors of dimensions (bsize, vsize) on the
@@ -1430,7 +1447,7 @@ class LSTMOffshoot(VaryLSTM):
                 vecs.append(inits[i].repeat(bsize,1))
             else:
                 vecs.append(torch.zeros(bsize, vsize).float())
-        if self.is_cuda:
+        if self.is_cuda and inits is None:
             for i in range(n):
                 vecs[i] = vecs[i].to(self.get_device())
         return vecs
@@ -1480,12 +1497,14 @@ class LSTMOffshoot(VaryLSTM):
             m = mask[:,0].bool()
             for i in range(len(self.hs)):
                 h = torch.empty_like(self.hs[i])
-                h[d] = self.h_inits[i]
-                h[m] = self.hs[i][m]
-                hs.append(h)
                 c = torch.empty_like(self.cs[i])
-                c[d] = self.c_inits[i]
-                c[m] = self.cs[i][m]
+                if torch.any(d):
+                    h[d] = self.h_inits[i]
+                    c[d] = self.c_inits[i]
+                if torch.any(m):
+                    h[m] = self.hs[i][m]
+                    c[m] = self.cs[i][m]
+                hs.append(h)
                 cs.append(c)
         else:
             hs = [h*mask for h in self.hs]
@@ -1538,24 +1557,8 @@ class SymmetricLSTM(LSTMOffshoot):
             size = self.h_size + size
         self.actn_lstm = nn.LSTMCell(size, self.h_size)
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
-
-        self.h_inits = None
-        self.c_inits = None
         if self.learn_h:
-            sqr = self.h_size**2
-            self.h_inits = [
-                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
-            ]
-            self.h_inits = nn.ParameterList(
-                [nn.Parameter(h) for h in self.h_inits]
-            )
-
-            self.c_inits = [
-                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
-            ]
-            self.c_inits = nn.ParameterList(
-                [nn.Parameter(c) for c in self.c_inits]
-            )
+            self.get_inits()
         self.reset(1)
 
         self.make_actn_dense()
@@ -1710,23 +1713,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
             # Multiply h_size by two for the conditional input
             size = self.flat_size+2*self.h_size
         self.lstm1 = nn.LSTMCell(size, self.h_size)
-        self.h_inits = None
-        self.c_inits = None
         if self.learn_h:
-            sqr = self.h_size**2
-            self.h_inits = [
-                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
-            ]
-            self.h_inits = nn.ParameterList(
-                [nn.Parameter(h) for h in self.h_inits]
-            )
-
-            self.c_inits = [
-                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
-            ]
-            self.c_inits = nn.ParameterList(
-                [nn.Parameter(c) for c in self.c_inits]
-            )
+            self.get_inits()
         self.reset(1)
         self.make_actn_dense()
         self.make_lang_denses()

@@ -50,8 +50,16 @@ def train(rank, hyps, verbose=True):
     data_collector = DataCollector(hyps)
     # Initialize model
     model = make_model(hyps)
-    model.cuda()
-    shared_model = copy.deepcopy(model)
+    shared_model = make_model(hyps)
+    shared_model.load_state_dict(model.state_dict())
+    # Need to delete all non-leaf nodes before we share with other procs
+    shared_model.prev_hs = []
+    shared_model.prev_cs = []
+    shared_model.hs = None
+    shared_model.cs = None
+    shared_model.h = None
+    shared_model.c = None
+    shared_model.lang = None
     shared_model.share_memory()
     # Begin collecting data
     if try_key(hyps, "trn_whls_epoch", None) is not None:
@@ -910,9 +918,13 @@ def hyps_default_manipulations(hyps):
     """
     # Set random seeds
     hyps['seed'] = try_key(hyps,'seed', int(time.time()))
-    torch.manual_seed(hyps["seed"])
-    np.random.seed(hyps["seed"])
-    torch.use_deterministic_algorithms(True)
+    seed = hyps["seed"]
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
     # Handle Hold Outs
     if "hold_out" in hyps and "hold_outs" not in hyps:
