@@ -73,6 +73,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         path to a training to resume from. The epochs argued in this
         hyperparameter set must be larger than where the resumed
         training left off.
+    "init_checkpt": str
+        path to a model checkpoint to initialize the model from.
+        If a model_folder is argued (instead of a specific checkpoint
+        file), the loaded weights will be from the last epoch of the
+        training.
     "lang_checkpt": str
         path to a language checkpoint to initialize the model from.
         If a model_folder is argued (instead of a specific checkpoint

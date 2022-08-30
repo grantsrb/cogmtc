@@ -62,6 +62,13 @@ TORCH_CONDITIONALS = {
  k: torch.LongTensor(v) for k,v in IDX_CONDITIONALS.items()
 }
 
+# The best way to do a nonverbal pretraining is to train phase==1 only
+# for the first phase and then use those model statedicts as the initial
+# values for a normal training.
+NONVERBAL_TASK_NAMES = [
+    "gordongames-v9"
+]
+
 ### TEST CONDITIONALS
 ##print("conditionals:")
 ##for k,v in CONDITIONALS.items():
