@@ -195,6 +195,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "h_size": int
         this number is used as the size of the RNN hidden vector and
         the transformer dim
+    "learn_h": bool
+        determines if the hidden vectors should be learned or not. if
+        true, both the h and c vectors are intiialized to a learned
+        vector.
     "h_mult": int
         this number is a multiplier for the `h_size` to expand the
         dimensionality of the dense output hidden layers.

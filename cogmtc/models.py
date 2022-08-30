@@ -141,6 +141,7 @@ class Model(CoreModule):
         use_count_words=None,
         max_ctx_len=None,
         vision_type=None,
+        learn_h=False,
         *args, **kwargs
     ):
         """
@@ -278,6 +279,8 @@ class Model(CoreModule):
                 the model class to be used for the raw visual processing
                 options include (but are probably not limited to):
                 VaryCNN, ViT
+            learn_h: bool
+                if true, the recurrent vectors are learned
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -331,6 +334,7 @@ class Model(CoreModule):
         self.use_count_words = use_count_words
         self.max_ctx_len = 128 if max_ctx_len is None else max_ctx_len
         self.vision_type = vision_type
+        self.learn_h = learn_h
 
     def initialize_conditional_variables(self):
         """
@@ -1199,6 +1203,14 @@ class VaryLSTM(Model):
         if self.lnorm:
             self.layernorm_c = nn.LayerNorm(self.h_size)
             self.layernorm_h = nn.LayerNorm(self.h_size)
+        self.h_init = None
+        self.c_init = None
+        if self.learn_h:
+            sqr = self.h_size**2
+            self.h_init = nn.Parameter(torch.randn(1,self.h_size)/sqr)
+            self.c_init = nn.Parameter(torch.randn(1,self.h_size)/sqr)
+        self.h_inits = None
+        self.c_inits = None
         self.h = None
         self.c = None
         self.lang = None
@@ -1235,8 +1247,12 @@ class VaryLSTM(Model):
         Returns:
             None
         """
-        self.h = torch.zeros(batch_size, self.h_size).float()
-        self.c = torch.zeros(batch_size, self.h_size).float()
+        if self.learn_h:
+            self.h = self.h_init.repeat(batch_size,1)
+            self.c = self.c_init.repeat(batch_size,1)
+        else:
+            self.h = torch.zeros(batch_size, self.h_size).float()
+            self.c = torch.zeros(batch_size, self.h_size).float()
         self.lang = torch.zeros(batch_size, self.max_char_seq).long()
         self.lang[:,0] = self.STOP
         # Ensure memory is on appropriate device
@@ -1262,8 +1278,22 @@ class VaryLSTM(Model):
             lang: torch LongTensor (B,L)
         """
         mask = (1-dones).unsqueeze(-1)
-        h = self.h*mask
-        c = self.c*mask
+        if self.learn_h:
+            d = dones.bool()
+            m = mask[:,0].bool()
+
+            h = torch.empty_like(self.h)
+            h[d] = self.h_init
+            h[m] = self.h[m]
+
+            c = torch.empty_like(self.c)
+            c[d] = self.c_init
+            c[m] = self.c[m]
+            #h = self.h*mask + self.h_init.repeat(len(self.h), 1)*dones
+            #c = self.c*mask + self.c_init.repeat(len(self.h), 1)*dones
+        else:
+            h = self.h*mask
+            c = self.c*mask
         lang = self.lang*mask
         lang[dones.bool(),0] = self.STOP
         return h,c,lang
@@ -1374,7 +1404,7 @@ class LSTMOffshoot(VaryLSTM):
     """
     Class to share functions between DoubleVaryLSTM and SymmetricLSTM
     """
-    def get_vector_list(self, n, bsize, vsize):
+    def get_vector_list(self, n, bsize, vsize, inits=None):
         """
         Returns a list of vectors of dimensions (bsize, vsize) on the
         appropriate device.
@@ -1386,6 +1416,9 @@ class LSTMOffshoot(VaryLSTM):
                 the batchsize
             vsize: int
                 the vector size (dimensionality of each vector)
+            inits: list of Parameters or None
+                optional list of initialization vectors if learning
+                the hidden state
         Returns:
             vecs: list of torch FloatTensor [N, (B,V)]
                 a list of length N with vectors of shape (B,V) on
@@ -1393,7 +1426,10 @@ class LSTMOffshoot(VaryLSTM):
         """
         vecs = []
         for i in range(n):
-            vecs.append(torch.zeros(bsize, vsize).float())
+            if inits is not None:
+                vecs.append(inits[i].repeat(bsize,1))
+            else:
+                vecs.append(torch.zeros(bsize, vsize).float())
         if self.is_cuda:
             for i in range(n):
                 vecs[i] = vecs[i].to(self.get_device())
@@ -1410,10 +1446,10 @@ class LSTMOffshoot(VaryLSTM):
             None
         """
         self.hs = self.get_vector_list(
-            self.n_lstms, batch_size, self.h_size
+            self.n_lstms, batch_size, self.h_size, self.h_inits
         )
         self.cs = self.get_vector_list(
-            self.n_lstms, batch_size, self.h_size
+            self.n_lstms, batch_size, self.h_size, self.c_inits
         )
         self.lang = torch.zeros(batch_size, self.max_char_seq).long()
         self.lang[:,0] = self.STOP
@@ -1437,8 +1473,23 @@ class LSTMOffshoot(VaryLSTM):
             c: torch FloatTensor (B, H)
         """
         mask = (1-dones).unsqueeze(-1)
-        hs = [h*mask for h in self.hs]
-        cs = [c*mask for c in self.cs]
+        if self.learn_h:
+            hs = []
+            cs = []
+            d = dones.bool()
+            m = mask[:,0].bool()
+            for i in range(len(self.hs)):
+                h = torch.empty_like(self.hs[i])
+                h[d] = self.h_inits[i]
+                h[m] = self.hs[i][m]
+                hs.append(h)
+                c = torch.empty_like(self.cs[i])
+                c[d] = self.c_inits[i]
+                c[m] = self.cs[i][m]
+                cs.append(c)
+        else:
+            hs = [h*mask for h in self.hs]
+            cs = [c*mask for c in self.cs]
         lang = self.lang*mask
         lang[dones.bool(),0] = self.STOP
         return hs,cs,lang
@@ -1488,6 +1539,23 @@ class SymmetricLSTM(LSTMOffshoot):
         self.actn_lstm = nn.LSTMCell(size, self.h_size)
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
 
+        self.h_inits = None
+        self.c_inits = None
+        if self.learn_h:
+            sqr = self.h_size**2
+            self.h_inits = [
+                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
+            ]
+            self.h_inits = nn.ParameterList(
+                [nn.Parameter(h) for h in self.h_inits]
+            )
+
+            self.c_inits = [
+                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
+            ]
+            self.c_inits = nn.ParameterList(
+                [nn.Parameter(c) for c in self.c_inits]
+            )
         self.reset(1)
 
         self.make_actn_dense()
@@ -1642,6 +1710,23 @@ class DoubleVaryLSTM(LSTMOffshoot):
             # Multiply h_size by two for the conditional input
             size = self.flat_size+2*self.h_size
         self.lstm1 = nn.LSTMCell(size, self.h_size)
+        self.h_inits = None
+        self.c_inits = None
+        if self.learn_h:
+            sqr = self.h_size**2
+            self.h_inits = [
+                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
+            ]
+            self.h_inits = nn.ParameterList(
+                [nn.Parameter(h) for h in self.h_inits]
+            )
+
+            self.c_inits = [
+                torch.randn(1,self.h_size)/sqr for _ in self.n_lstms
+            ]
+            self.c_inits = nn.ParameterList(
+                [nn.Parameter(c) for c in self.c_inits]
+            )
         self.reset(1)
         self.make_actn_dense()
         self.make_lang_denses()
