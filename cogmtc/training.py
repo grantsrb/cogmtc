@@ -1009,7 +1009,9 @@ def hyps_error_catching(hyps):
             hyps["val_targ_range"] = [1,3]
             print("Non verbal task, setting targ range to", hyps["targ_range"])
             break
-
+    if "grad_clip" in hyps:
+        hyps["grad_norm"] = hyps["grad_clip"]
+        print("grad_clip found in hyps, changing to grad_norm")
     if "incl_lang_inpts" in hyps and "incl_lang_inpt" not in hyps:
         hyps["incl_lang_inpt"] = hyps["incl_lang_inpts"]
         print("Fixing plural mistake, incl_lang_inpts to incl_lang_inpt")
