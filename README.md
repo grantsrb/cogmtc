@@ -410,6 +410,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the probability of dropping gradient values. higher values means
         more dropout. This is applied to all model parameters after
         every backward pass before the optimizer update step.
+    "grad_norm": float
+        the maximum gradient norm used for gradient norm clipping. If
+        the argued value is less than or equal to 0, no gradient clipping
+        occurs.
     "optim_type": str
         the name of the class to use for the optimizer. i.e. "Adam"
     "factor": float

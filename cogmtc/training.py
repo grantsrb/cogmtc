@@ -524,6 +524,11 @@ class Trainer:
             )
             # Backprop and update
             loss.backward()
+            if try_key(self.hyps, "grad_norm", 0) > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    self.hyps["grad_norm"]
+                )
             if try_key(self.hyps, "drop_grad", 0) > 0:
                 drop_p = self.hyps["drop_grad"]
                 for p in model.parameters():

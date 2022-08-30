@@ -92,6 +92,7 @@
     "n_eval_eps": 10,
 
     "drop_grad": 0,
+    "grad_norm": -1,
     "optim_type": "RMSprop",
     "factor": 0.9,
     "patience": 10,
