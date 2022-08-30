@@ -500,6 +500,7 @@ class DataCollector:
             self.hyps["collection_size"] = csize
             self.hyps["exp_len"] = self.hyps["seq_len"]
             self.hyps["roll_data"] = False
+            self.hyps["rand_seq_len"] = False
         else:
             self.hyps["collection_size"] = self.hyps["batch_size"]
 
