@@ -971,6 +971,13 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
+    adder = hyps["grid_size"][-1]
+    max_steps = hyps["val_targ_range"][-1]*2 + adder
+    hyps_steps = try_key(hyps, "max_steps", 0)
+    if max_steps > hyps_steps:
+        hyps["max_steps"] = max_steps
+        print("Found impossible max_steps, changing to", max_steps)
+
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:
         hyps["use_count_words"] = 1
