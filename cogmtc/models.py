@@ -1703,6 +1703,7 @@ class SymmetricLSTM(LSTMOffshoot):
 class DoubleVaryLSTM(LSTMOffshoot):
     """
     A model with two LSTMs. One for each the language and action outputs.
+    The structure is such that one LSTM feeds into the other.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
