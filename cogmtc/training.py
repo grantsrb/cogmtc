@@ -223,6 +223,11 @@ def training_loop(n_epochs,
         # during training
         data_collector.exp_replay.harvest_exp(trainer.phase)
         data_collector.dispatch_runners()
+        if try_key(trainer.hyps, "incr_seq_len", False):
+            max_sl = data_collector.exp_replay.max_seq_len
+            min_sl = trainer.hyps["min_seq_len"]
+            seqlen = min_sl + epoch * (n_epochs//(max_sl-min_sl))
+            data_collector.exp_replay.seq_len = seqlen
         trainer.train(model, data_collector.exp_replay, epoch)
 
         # Validate Model by Awaiting Validation Process
@@ -971,6 +976,8 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
+    if try_key(hyps, "min_seq_len", None) is None:
+        hyps["min_seq_len"] = 7
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:
         hyps["use_count_words"] = 1

@@ -848,6 +848,23 @@ class RandomModel(Model):
             lang.cuda()
         return self.output_fxn(actn), (lang,)
 
+class RawVision(Model):
+    """
+    Use this module to feed the visual input directly into the LSTM.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model_type = MODEL_TYPES.CNN
+        self.shapes = [ *self.inpt_shape[-3:] ]
+        self.flat_size = int(np.prod(self.inpt_shape[-3:]))
+        self.features = NullOp()
+
+    def step(self, x, *args, **kwargs):
+        return x
+
+    def forward(self, x, *args, **kwargs):
+        return x
+
 class VaryCNN(Model):
     """
     A simple convolutional network with no recurrence.

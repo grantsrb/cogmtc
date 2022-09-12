@@ -141,6 +141,8 @@ class ExperienceReplay(torch.utils.data.Dataset):
         self.bsize = self.hyps["batch_size"]
         self.inpt_shape = self.hyps["inpt_shape"]
         self.seq_len    = self.hyps["seq_len"]
+        self.max_seq_len = self.seq_len # Used for incrementing the seq
+        #  length over the course of training
         self.randomize_order = self.hyps["randomize_order"]
         self.rand_seq_len = try_key(self.hyps, "rand_seq_len", False)
 
@@ -283,13 +285,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
                         zeros denote used spaces, ones denote padding
                     tasks: torch long tensor (N, S)
         """
+        min_seq_len = self.hyps["min_seq_len"]
         raw_len = self.exp_len - self.seq_len + 1
         seq_len = self.seq_len
         if not self.roll_data:
             idx = idx*self.seq_len
             raw_len = self.exp_len
-        elif self.rand_seq_len and seq_len > 7:
-            seq_len = int(np.random.randint(7, seq_len+1))
+        elif self.rand_seq_len and seq_len > min_seq_len:
+            seq_len = int(np.random.randint(min_seq_len, seq_len+1))
 
         bstartx = int(idx/raw_len)*self.bsize
         bendx  = bstartx+self.bsize
