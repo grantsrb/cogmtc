@@ -357,6 +357,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "seq_len": int
         the number of consecutive frames to feed into the model for
         a single batch of data
+    "min_seq_len": int
+        the seq length to start from if using `incr_seq_len` and the
+        minimum possible `seq_len` if using rand_seq_len. Defaults to 7.
     "incr_seq_len": bool
         if true, the seq_len for bptt will start small and increment
         upwards over the course of the whole training.

@@ -976,8 +976,11 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
-    if try_key(hyps, "min_seq_len", None) is None:
-        hyps["min_seq_len"] = 7
+    msl = try_key(hyps, "min_seq_len", None)
+    if msl is None or msl <= 1:
+        default_val = 7
+        print("Setting min_seq_len to", default_val)
+        hyps["min_seq_len"] = default_val
 
     adder = hyps["grid_size"][-1]
     max_steps = hyps["val_targ_range"][-1]*2 + adder
