@@ -108,12 +108,16 @@ class SequentialEnvironment:
 
         if "gordon" in env_type or "nake" in env_type:
             kwargs["env_type"] = env_type
-            self.env = gym.make(env_type, **kwargs)
+            self.env = gym.make(
+                env_type,
+                disable_env_checker=True,
+                **kwargs
+            )
         else:
-            self.env = gym.make(env_type)
+            self.env = gym.make(env_type, disable_env_checker=True)
         self.env.seed(self.seed)
         self.is_gym = True
-        self._raw_shape = self.env.reset().shape
+        self._raw_shape = self.env.reset()[0].shape
         self._shape = self.reset().shape
         self.action_space = self.env.action_space
         if hasattr(self.action_space, "n"):
@@ -147,9 +151,9 @@ class SequentialEnvironment:
 
     def reset(self, n_targs=None):
         try:
-            obs = self.env.reset(n_targs=n_targs)
+            obs = self.env.reset(n_targs=n_targs)[0]
         except:
-            obs = self.env.reset()
+            obs = self.env.reset()[0]
         return self.prep_obs(obs)
 
     def step(self,action):
