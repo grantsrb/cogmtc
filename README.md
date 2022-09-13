@@ -215,6 +215,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "fc_lnorm": bool
+        if true, the model uses a layernorm before each Linear layer
+        in the fully connected layers
+    "scaleshift": bool
+        if true, adds a ScaleShift layer after each Linear layer in
+        the fully connected layers
     "skip_lstm": bool
         if true, the features are inluded using a skip connection
         to the second lstm. Only applies in DoubleVaryLSTM variants

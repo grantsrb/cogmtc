@@ -39,6 +39,7 @@ def get_fcnet(inpt_size,
               drop_p=0,
               bnorm=False,
               lnorm=False,
+              scaleshift=True,
               actv_fxn="ReLU"):
     """
     Defines a simple fully connected Sequential module
@@ -60,19 +61,26 @@ def get_fcnet(inpt_size,
             if true, batchnorm is included before each relu layer
         lnorm: bool
             if true, layer norm is included before each relu layer
+        scaleshift: bool
+            if true, a ScaleShift layer is added after the activation
+            function
     """
     outsize= h_size if n_layers > 1 else outp_size
-    block = [ nn.Linear(inpt_size, outsize) ]
+    block = [  ]
+    if lnorm: block.append( nn.LayerNorm(inpt_size) )
+    block.append( nn.Linear(inpt_size, outsize) )
+    if scaleshift: block.append( ScaleShift(outsize) )
     prev_size = outsize
     for i in range(1, n_layers):
         block.append( GaussianNoise(noise) )
-        if bnorm: block.append( nn.BatchNorm1d(outsize) )
-        if lnorm: block.append( nn.LayerNorm(outsize) )
         block.append( nn.Dropout(drop_p) )
         block.append( globals()[actv_fxn]() )
-        block.append( ScaleShift((outsize,)) )
+        if bnorm: block.append( nn.BatchNorm1d(outsize) )
+        if lnorm: block.append( nn.LayerNorm(outsize) )
         if i+1 == n_layers: outsize = outp_size
         block.append( nn.Linear(prev_size, outsize) )
+        if scaleshift:
+            block.append( ScaleShift((outsize,)) )
     return nn.Sequential(*block)
 
 class CoreModule(torch.nn.Module):
@@ -142,6 +150,8 @@ class Model(CoreModule):
         max_ctx_len=None,
         vision_type=None,
         learn_h=False,
+        scaleshift=True,
+        fc_lnorm=False,
         *args, **kwargs
     ):
         """
@@ -281,6 +291,12 @@ class Model(CoreModule):
                 VaryCNN, ViT
             learn_h: bool
                 if true, the recurrent vectors are learned
+            scaleshift: bool
+                if true, adds a scaleshift layer after each Linear
+                layer in the fully connected layers
+            fc_lnorm: bool
+                if true, adds a layernorm layer before each Linear
+                layer in the fully connected layers
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -335,6 +351,8 @@ class Model(CoreModule):
         self.max_ctx_len = 128 if max_ctx_len is None else max_ctx_len
         self.vision_type = vision_type
         self.learn_h = learn_h
+        self.scaleshift = scaleshift
+        self.fc_lnorm = fc_lnorm
 
     def initialize_conditional_variables(self):
         """
@@ -366,7 +384,8 @@ class Model(CoreModule):
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
             bnorm=self.bnorm,
-            lnorm=False
+            lnorm=self.fc_lnorm,
+            scaleshift=self.scaleshift
         )
 
     def make_lang_denses(self, inpt_size=None):
@@ -392,6 +411,8 @@ class Model(CoreModule):
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
                     lnorm=self.lnorm,
+                    fc_lnorm=self.fc_lnorm,
+                    scaleshift=self.scaleshift
                 )
             else:
                 dense = get_fcnet(
@@ -403,7 +424,8 @@ class Model(CoreModule):
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
                     bnorm=self.bnorm,
-                    lnorm=False
+                    lnorm=self.fc_lnorm,
+                    scaleshift=self.scaleshift
                 )
             self.lang_denses.append(dense)
 
@@ -498,6 +520,8 @@ class NumeralLangLSTM(nn.Module):
                        drop_p=0,
                        actv_fxn="ReLU",
                        lnorm=True,
+                       fc_lnorm=False,
+                       scaleshift=False,
                        *args,**kwargs):
         """
         Args:
@@ -508,6 +532,8 @@ class NumeralLangLSTM(nn.Module):
             n_outlayers: int
             drop_p: float
             lnorm: bool
+            fc_lnorm: bool
+            scaleshift: bool
         """
         super().__init__()
         self.inpt_size = inpt_size
@@ -517,6 +543,8 @@ class NumeralLangLSTM(nn.Module):
         self.n_outlayers = n_outlayers
         self.h_mult = h_mult
         self.lnorm = lnorm
+        self.fc_lnorm = fc_lnorm
+        self.scaleshift = scaleshift
         self.drop_p = drop_p
         self.actv_fxn = actv_fxn
         self.lstm = ContainedLSTM(
@@ -530,7 +558,8 @@ class NumeralLangLSTM(nn.Module):
             noise=0,
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
-            lnorm=False
+            lnorm=self.fc_lnorm,
+            scaleshift=self.scaleshift
         )
 
     def forward(self, x):
