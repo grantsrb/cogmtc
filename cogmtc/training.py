@@ -976,6 +976,10 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
+    if "fc_norm" in hyps:
+        print("found fc_norm in hyps, changing to fc_lnorm")
+        hyps["fc_lnorm"] = hyps["fc_norm"]
+
     msl = try_key(hyps, "min_seq_len", None)
     if msl is None or msl <= 1:
         default_val = 7
