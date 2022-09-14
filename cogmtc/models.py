@@ -67,8 +67,6 @@ def get_fcnet(inpt_size,
     """
     outsize= h_size if n_layers > 1 else outp_size
     block = [  ]
-    if lnorm: block.append( nn.LayerNorm(inpt_size) )
-    if scaleshift: block.append( ScaleShift(inpt_size) )
     block.append( nn.Linear(inpt_size, outsize) )
     prev_size = outsize
     for i in range(1, n_layers):
