@@ -68,8 +68,8 @@ def get_fcnet(inpt_size,
     outsize= h_size if n_layers > 1 else outp_size
     block = [  ]
     if lnorm: block.append( nn.LayerNorm(inpt_size) )
-    block.append( nn.Linear(inpt_size, outsize) )
     if scaleshift: block.append( ScaleShift(outsize) )
+    block.append( nn.Linear(inpt_size, outsize) )
     prev_size = outsize
     for i in range(1, n_layers):
         block.append( GaussianNoise(noise) )
@@ -78,9 +78,9 @@ def get_fcnet(inpt_size,
         if bnorm: block.append( nn.BatchNorm1d(outsize) )
         if lnorm: block.append( nn.LayerNorm(outsize) )
         if i+1 == n_layers: outsize = outp_size
-        block.append( nn.Linear(prev_size, outsize) )
         if scaleshift:
             block.append( ScaleShift((outsize,)) )
+        block.append( nn.Linear(prev_size, outsize) )
     return nn.Sequential(*block)
 
 class CoreModule(torch.nn.Module):
