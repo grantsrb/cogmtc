@@ -218,6 +218,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "fc_lnorm": bool
         if true, the model uses a layernorm before each Linear layer
         in the fully connected layers
+    "fc_bnorm": bool
+        if true, the model uses a batchnorm before each Linear layer
+        in the fully connected layers
     "scaleshift": bool
         if true, adds a ScaleShift layer after each Linear layer in
         the fully connected layers
