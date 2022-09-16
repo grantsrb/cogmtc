@@ -1583,6 +1583,185 @@ class LSTMOffshoot(VaryLSTM):
         self.prev_cs = self.prev_cs[:step+1]
         self.prev_langs = self.prev_langs[:step+1]
 
+class SeparateLSTM(LSTMOffshoot):
+    """
+    A model with three LSTMs total. One for language that operates
+    independently. Then two sequential LSTMs for the actions that
+    receives a cut-gradient language input.
+    """
+    def __init__(self, next_step_lang=False, *args, **kwargs):
+        """
+        next_step_lang: bool
+            if false, language inputs from the current time step are
+            fed into the action LSTM. if true, the language from the
+            previous step is used as inputs.
+        """
+        super().__init__(*args, **kwargs)
+        self.next_step_lang = next_step_lang
+        self.n_lstms = 3
+        self.n_lang_denses = 1
+
+        size = self.flat_size + self.h_size # add hsize for condtional
+        self.lang_lstm = nn.LSTMCell(size, self.h_size)
+
+        size = self.h_size
+        if self.skip_lstm:
+            # add additional h_size here for conditional input
+            size = self.h_size + size
+        self.actn_lstm = nn.LSTMCell(size, self.h_size)
+
+        if self.learn_h:
+            self.get_inits()
+        self.reset(1)
+
+        self.make_actn_dense()
+        self.make_lang_denses()
+
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+                a single step of observations
+            cdtnl: torch FloatTensor (B, E)
+                the conditional latent vectors
+            mask: torch LongTensor or BoolTensor (B,)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
+            lang_inpt: None or LongTensor (B,M)
+                if not None and self.incl_lang_inpt is true, lang_inpts
+                are used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor [ (B, L) ]
+        """
+        # Not that the mask gets flipped to where 1 means keep the
+        # calculation in the data
+        if mask is None:
+            mask = torch.ones(x.shape[0]).long()
+        else:
+            mask = (1-mask)
+        mask = mask.bool() # bool is important for using the mask as an
+        # indexing tool
+        device = self.get_device()
+        self.lang = self.lang.to(device)
+        mask = mask.to(device)
+        for i in range(self.n_lstms):
+            self.hs[i] = self.hs[i].to(device)
+            self.cs[i] = self.cs[i].to(device)
+
+        fx = self.features(x[mask])
+        fx = fx.reshape(len(fx), -1) # (B, N)
+        inpt = [fx, cdtnl[mask]]
+        cat = torch.cat(inpt, dim=-1)
+
+        lang_h, lang_c = self.lang_lstm(
+            cat, (self.hs[2][mask], self.cs[2][mask])
+        )
+        lang = self.lang_denses[0](lang_h)
+
+        if self.incl_lang_inpt:
+            if self.next_step_lang:
+                prev_lang = self.lang if lang_inpt is None else lang_inpt
+                consol = self.lang_consolidator(prev_lang[mask])
+            else:
+                prev_lang = self.process_lang_preds([lang])
+                consol = self.lang_consolidator(prev_lang)
+            inpt.append(consol)
+            cat = torch.cat(inpt, dim=-1)
+        else:
+            assert False, "don't use SeparateLSTM without incl_lang_inpt"
+
+        h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
+        if self.lnorm:
+            c = self.layernorm_c(c)
+            h = self.layernorm_h(h)
+
+        inpt = h
+        if self.skip_lstm: 
+            inpt = [cat]
+            inpt = torch.cat(inpt, dim=-1)
+
+        actn_h, actn_c = self.actn_lstm(
+            inpt, (self.hs[1][mask], self.cs[1][mask])
+        )
+        actn = self.actn_dense(actn_h)
+
+        temp_hs = [h, actn_h, lang_h]
+        temp_cs = [c, actn_c, lang_c]
+        for i in range(len(self.hs)):
+            temp_h = torch.zeros_like(self.hs[i])
+            temp_h[mask] = temp_hs[i]
+            self.hs[i] = temp_h
+            temp_c = torch.zeros_like(self.cs[i])
+            temp_c[mask] = temp_cs[i]
+            self.cs[i] = temp_c
+
+        actn = self.output_fxn(actn)
+        temp_actn = torch.zeros(x.shape[0],actn.shape[-1],device=device)
+        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
+        temp_actn[mask] = actn
+        temp_lang[mask] = lang
+        if self.next_step_lang:
+            self.lang = self.process_lang_preds([temp_lang])
+        return temp_actn, [temp_lang]
+
+    def forward(self,x,dones,tasks,masks,lang_inpts=None,*args,**kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+            dones: torch Long Tensor (B, S)
+                the done signals for the environment. the h and c
+                vectors are reset when encountering a done signal
+            tasks: torch Long Tensor (B, S)
+                the task signal corresponding to each environment.
+            masks: torch LongTensor or BoolTensor (B,S)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
+            lang_inpts: None or LongTensor (B,S,M)
+                if not None and self.incl_lang_inpt is true, lang_inpts
+                are used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+            langs: torch FloatTensor (N,B,S,L)
+        """
+        cdtnl = self.cdtnl_lstm(self.cdtnl_idxs)
+        seq_len = x.shape[1]
+        actns = []
+        langs = []
+        self.prev_hs = []
+        self.prev_cs = []
+        self.prev_langs = []
+        if x.is_cuda:
+            dones = dones.to(x.get_device())
+        for s in range(seq_len):
+            if masks[:,s].sum() == len(masks):
+                actns.append(torch.zeros_like(actns[-1]))
+                langs.append(torch.zeros_like(langs[-1]))
+            else:
+                lang_inpt=None if lang_inpts is None else lang_inpts[:,s]
+                actn, lang = self.step(
+                  x[:,s], cdtnl[tasks[:,s]], masks[:,s], lang_inpt
+                )
+                actns.append(actn.unsqueeze(1))
+                lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
+                langs.append(lang)
+
+            self.hs, self.cs, self.lang = self.partial_reset(dones[:,s])
+            self.prev_hs.append([h.detach().data for h in self.hs])
+            self.prev_cs.append([c.detach().data for c in self.cs])
+            self.prev_langs.append(self.lang)
+        return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
+
+
 
 class SymmetricLSTM(LSTMOffshoot):
     """
