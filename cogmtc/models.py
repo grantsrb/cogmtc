@@ -149,6 +149,7 @@ class Model(CoreModule):
         learn_h=False,
         scaleshift=True,
         fc_lnorm=False,
+        fc_bnorm=False,
         *args, **kwargs
     ):
         """
@@ -294,6 +295,9 @@ class Model(CoreModule):
             fc_lnorm: bool
                 if true, adds a layernorm layer before each Linear
                 layer in the fully connected layers
+            fc_bnorm: bool
+                if true, adds a batchnorm layer before each Linear
+                layer in the fully connected layers
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -350,6 +354,7 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
+        self.fc_bnorm = fc_bnorm 
 
     def initialize_conditional_variables(self):
         """
@@ -380,7 +385,7 @@ class Model(CoreModule):
             noise=self.dense_noise,
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
-            bnorm=self.bnorm,
+            bnorm=self.fc_bnorm,
             lnorm=self.fc_lnorm,
             scaleshift=self.scaleshift
         )
@@ -409,6 +414,7 @@ class Model(CoreModule):
                     actv_fxn=self.actv_fxn,
                     lnorm=self.lnorm,
                     fc_lnorm=self.fc_lnorm,
+                    fc_bnorm=self.fc_bnorm,
                     scaleshift=self.scaleshift
                 )
             else:
@@ -420,7 +426,7 @@ class Model(CoreModule):
                     noise=self.dense_noise,
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
-                    bnorm=self.bnorm,
+                    bnorm=self.fc_bnorm,
                     lnorm=self.fc_lnorm,
                     scaleshift=self.scaleshift
                 )
@@ -518,6 +524,7 @@ class NumeralLangLSTM(nn.Module):
                        actv_fxn="ReLU",
                        lnorm=True,
                        fc_lnorm=False,
+                       fc_bnorm=False,
                        scaleshift=False,
                        *args,**kwargs):
         """
@@ -530,6 +537,7 @@ class NumeralLangLSTM(nn.Module):
             drop_p: float
             lnorm: bool
             fc_lnorm: bool
+            fc_bnorm: bool
             scaleshift: bool
         """
         super().__init__()
@@ -541,6 +549,7 @@ class NumeralLangLSTM(nn.Module):
         self.h_mult = h_mult
         self.lnorm = lnorm
         self.fc_lnorm = fc_lnorm
+        self.fc_bnorm = fc_bnorm
         self.scaleshift = scaleshift
         self.drop_p = drop_p
         self.actv_fxn = actv_fxn
@@ -556,6 +565,7 @@ class NumeralLangLSTM(nn.Module):
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
             lnorm=self.fc_lnorm,
+            bnorm=self.fc_bnorm,
             scaleshift=self.scaleshift
         )
 
@@ -1199,8 +1209,6 @@ class SimpleCNN(VaryCNN):
 class VaryLSTM(Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert self.bnorm == False,\
-            "bnorm must be False. it does not work with Recurrence!"
         if self.max_char_seq is None: self.max_char_seq = 1
 
         # Convs
@@ -2052,8 +2060,6 @@ class SimpleLSTM(VaryLSTM):
             "skip_lstm": False,
         }
         super().__init__( *args, **kwargs )
-        assert self.bnorm == False,\
-            "bnorm must be False. it does not work with Recurrence!"
         # Action Dense
         if self.drop_p > 0:
             self.actn_dense = nn.Sequential(
@@ -2163,8 +2169,6 @@ class Transformer(Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model_type = MODEL_TYPES.TRANSFORMER
-        assert self.bnorm == False,\
-            "bnorm must be False. it does not work with Recurrence!"
 
         # Convs
         if self.vision_type is None:
