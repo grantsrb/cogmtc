@@ -44,6 +44,7 @@ def train(rank, hyps, verbose=True):
 
     # Set select defaults and seed
     hyps_default_manipulations(hyps)
+    hyps_error_catching(hyps)
 
     # Initialize Data Collector
     # DataCollector's Initializer does Important changes to hyps
@@ -84,7 +85,7 @@ def train(rank, hyps, verbose=True):
     # of trainer.
     first_phase = try_key(hyps, "first_phase", 0)
     skip_first_phase = try_key(hyps,"skip_first_phase",False)
-    hyps_error_catching(hyps)
+    #hyps_error_catching(hyps)
     if not skip_first_phase and trainer.phase == first_phase:
         s = "\n\nBeginning First Phase: " + str(trainer.phase)
         recorder.write_to_log(s)
@@ -993,8 +994,14 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
+    if hyps["model_type"] == "SeparateLSTM":
+        hyps["incl_lang_inpt"] = True
+        print("updating incl_lang_inpt")
+
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:
+        if hyps["model_type"] == "SeparateLSTM":
+            hyps["model_type"] = "DoubleVaryLSTM"
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
         hyps["skip_first_phase"] = True
