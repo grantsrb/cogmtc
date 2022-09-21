@@ -176,12 +176,22 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         be used for the action layers. If False, the second h
         vector will be used for language and the first h for
         actions. Defaults to True
+    "stagger_preds": bool
+        if true, the language and action predictions are made from
+        different LSTMs within the model if possible. The order is
+        determined using `lstm_lang_first`
     "incl_lang_inpt": bool
         if true, the softmax or one-hot
         encoding or h vector (depending on `langactn_inpt_type`)
-        of the language output for the last timestep is included as
-        input into the language and action lstms. If false,
+        of the language output for the current timestep is included as
+        input into the action prediction. If false,
         the language output is not included.
+    "same_step_lang": bool
+        if true, the language prediction used as input to the
+        action network comes from the same time step. i.e. the
+        language prediction is made and directly feeds into the
+        action prediction.  Only applies if `incl_lang_inpt` is
+        true.
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true

@@ -150,6 +150,8 @@ class Model(CoreModule):
         scaleshift=True,
         fc_lnorm=False,
         fc_bnorm=False,
+        stagger_preds=True,
+        same_step_lang=False,
         *args, **kwargs
     ):
         """
@@ -298,6 +300,16 @@ class Model(CoreModule):
             fc_bnorm: bool
                 if true, adds a batchnorm layer before each Linear
                 layer in the fully connected layers
+            stagger_preds: bool
+                if true, the language and action predictions are made
+                from different LSTMs within the model if possible. The
+                order is determined using `lstm_lang_first`
+            same_step_lang: bool
+                if true, the language prediction used as input to the
+                action network comes from the same time step. i.e. the
+                language prediction is made and directly feeds into the
+                action prediction.  Only applies if `incl_lang_inpt` is
+                true.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -354,7 +366,9 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
-        self.fc_bnorm = fc_bnorm 
+        self.fc_bnorm = fc_bnorm
+        self.stagger_preds = stagger_preds
+        self.same_step_lang = same_step_lang
 
     def initialize_conditional_variables(self):
         """
@@ -1974,7 +1988,24 @@ class DoubleVaryLSTM(LSTMOffshoot):
         fx = self.features(x)
         fx = fx.reshape(len(x), -1) # (B, N)
         inpt = [fx, cdtnl]
-        if self.incl_lang_inpt:
+
+        langs = []
+        if self.same_step_lang and self.incl_lang_inpt:
+            inpt.append(torch.zeros(len(fx), self.h_size))
+            cat = torch.cat(inpt, dim=-1)
+            h, _ = self.lstm0( cat, (self.hs[0], self.cs[0]) )
+            if self.lnorm:
+                h = self.layernorm_h(h)
+            if not self.stagger_preds:
+                inpt = h
+                if self.skip_lstm: inpt = torch.cat([cat,inpt],dim=-1)
+                h, _ = self.lstm1( inpt, (self.hs[1], self.cs[1]) )
+            for dense in self.lang_denses:
+                langs.append(dense(h))
+            lang = self.process_lang_preds(langs)
+            consol = self.lang_consolidator(lang)
+            inpt = [fx, cdtnl, consol]
+        elif self.incl_lang_inpt:
             prev_lang = self.lang if lang_inpt is None else lang_inpt
             consol = self.lang_consolidator(prev_lang)
             inpt.append(consol)
@@ -1984,19 +2015,19 @@ class DoubleVaryLSTM(LSTMOffshoot):
         if self.lnorm:
             c0 = self.layernorm_c(c0)
             h0 = self.layernorm_h(h0)
+
         inpt = h0
         if self.skip_lstm: inpt = torch.cat([cat,inpt],dim=-1)
         h1, c1 = self.lstm1( inpt, (self.hs[1], self.cs[1]) )
-        if self.lstm_lang_first:
-            langs = []
+
+        if self.stagger_preds:
+            lang_in, actn_in = (h0,h1) if self.lstm_lang_first else (h1,h0)
+        else: lang_in,actn_in = h1,h1
+        if len(langs)==0:
             for dense in self.lang_denses:
-                langs.append(dense(h0))
-            actn = self.actn_dense(h1)
-        else:
-            langs = []
-            for dense in self.lang_denses:
-                langs.append(dense(h1))
-            actn = self.actn_dense(h0)
+                langs.append(dense(lang_in))
+        actn = self.actn_dense(actn_in)
+
         self.hs = [h0, h1]
         self.cs = [c0, c1]
         self.lang = self.process_lang_preds(langs)

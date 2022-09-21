@@ -31,6 +31,7 @@
     "model_type": "DoubleVaryLSTM",
     "vision_type": "VaryCNN",
     "lstm_lang": true,
+    "stagger_preds": true,
     "lstm_lang_first": true,
 
     "incl_lang_inpt": false,
