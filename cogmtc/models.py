@@ -1991,7 +1991,10 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
         langs = []
         if self.same_step_lang and self.incl_lang_inpt:
-            inpt.append(torch.zeros(len(fx), self.h_size))
+            inpt.append(torch.zeros(
+                (len(fx), self.h_size),
+                device=self.get_device())
+            )
             cat = torch.cat(inpt, dim=-1)
             h, _ = self.lstm0( cat, (self.hs[0], self.cs[0]) )
             if self.lnorm:
