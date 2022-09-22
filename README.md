@@ -331,6 +331,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         placed along the top row of the grid at the beginning of each
         episode. If false, they are evenly spaced along the top row
         in the following order player, dispenser, ending button.
+    "spacing_limit": int or null
+        if not null and greater than 0, limits the spacing between the
+        player and dispenser, and the ending button and dispenser to
+        be within `spacing_limit` steps on either side of the
+        dispenser's initial position. If `rand_pdb` is false, the
+        player and ending button will always be `spacing_limit` steps
+        away symmetrically centered on the dispenser.
     "targ_range": list of ints (low, high)
         the range of potential target counts. This acts as the default
         if lang_range or actn_range are not specified. both low and
