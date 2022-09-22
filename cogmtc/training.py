@@ -996,7 +996,7 @@ def hyps_error_catching(hyps):
 
     if hyps["model_type"] == "SeparateLSTM":
         hyps["incl_lang_inpt"] = True
-        print("updating incl_lang_inpt")
+        print("updating incl_lang_inpt to true for SeparateLSTM")
 
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:

@@ -151,7 +151,6 @@ class Model(CoreModule):
         fc_lnorm=False,
         fc_bnorm=False,
         stagger_preds=True,
-        same_step_lang=False,
         *args, **kwargs
     ):
         """
@@ -304,8 +303,11 @@ class Model(CoreModule):
                 if true, the language and action predictions are made
                 from different LSTMs within the model if possible. The
                 order is determined using `lstm_lang_first`
-            same_step_lang: bool
-                if true, the language prediction used as input to the
+            same_step_lang (deprecated): bool
+                ~~This argument has been deprecated. All models that
+                use lang inputs use the equivalent of `same_step_lang`
+                equal to true.~~
+                If true, the language prediction used as input to the
                 action network comes from the same time step. i.e. the
                 language prediction is made and directly feeds into the
                 action prediction.  Only applies if `incl_lang_inpt` is
@@ -368,7 +370,6 @@ class Model(CoreModule):
         self.fc_lnorm = fc_lnorm
         self.fc_bnorm = fc_bnorm
         self.stagger_preds = stagger_preds
-        self.same_step_lang = same_step_lang
 
     def initialize_conditional_variables(self):
         """
@@ -1619,6 +1620,7 @@ class SeparateLSTM(LSTMOffshoot):
             previous step is used as inputs.
         """
         super().__init__(*args, **kwargs)
+        if not self.incl_lang_inpt: print("SeparateLSTM always includes lang input")
         self.next_step_lang = next_step_lang
         self.n_lstms = 3
         self.n_lang_denses = 1
@@ -1686,17 +1688,14 @@ class SeparateLSTM(LSTMOffshoot):
         )
         lang = self.lang_denses[0](lang_h)
 
-        if self.incl_lang_inpt:
-            if self.next_step_lang:
-                prev_lang = self.lang if lang_inpt is None else lang_inpt
-                consol = self.lang_consolidator(prev_lang[mask])
-            else:
-                prev_lang = self.process_lang_preds([lang])
-                consol = self.lang_consolidator(prev_lang)
-            inpt.append(consol)
-            cat = torch.cat(inpt, dim=-1)
+        if self.next_step_lang:
+            prev_lang = self.lang if lang_inpt is None else lang_inpt
+            consol = self.lang_consolidator(prev_lang[mask])
         else:
-            assert False, "don't use SeparateLSTM without incl_lang_inpt"
+            prev_lang = self.process_lang_preds([lang])
+            consol = self.lang_consolidator(prev_lang)
+        inpt.append(consol)
+        cat = torch.cat(inpt, dim=-1)
 
         h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
         if self.lnorm:
@@ -1990,7 +1989,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
         inpt = [fx, cdtnl]
 
         langs = []
-        if self.same_step_lang and self.incl_lang_inpt:
+        if self.incl_lang_inpt:
             inpt.append(torch.zeros(
                 (len(fx), self.h_size),
                 device=self.get_device())
@@ -2008,10 +2007,6 @@ class DoubleVaryLSTM(LSTMOffshoot):
             lang = self.process_lang_preds(langs)
             consol = self.lang_consolidator(lang)
             inpt = [fx, cdtnl, consol]
-        elif self.incl_lang_inpt:
-            prev_lang = self.lang if lang_inpt is None else lang_inpt
-            consol = self.lang_consolidator(prev_lang)
-            inpt.append(consol)
         cat = torch.cat(inpt, dim=-1)
 
         h0, c0 = self.lstm0( cat, (self.hs[0], self.cs[0]) )
@@ -2024,7 +2019,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
         h1, c1 = self.lstm1( inpt, (self.hs[1], self.cs[1]) )
 
         if self.stagger_preds:
-            lang_in, actn_in = (h0,h1) if self.lstm_lang_first else (h1,h0)
+            lang_in, actn_in = (inpt,h1) if self.lstm_lang_first else (h1,inpt)
         else: lang_in,actn_in = h1,h1
         if len(langs)==0:
             for dense in self.lang_denses:

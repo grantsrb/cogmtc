@@ -186,12 +186,6 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         of the language output for the current timestep is included as
         input into the action prediction. If false,
         the language output is not included.
-    "same_step_lang": bool
-        if true, the language prediction used as input to the
-        action network comes from the same time step. i.e. the
-        language prediction is made and directly feeds into the
-        action prediction.  Only applies if `incl_lang_inpt` is
-        true.
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
