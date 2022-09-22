@@ -151,6 +151,7 @@ class Model(CoreModule):
         fc_lnorm=False,
         fc_bnorm=False,
         stagger_preds=True,
+        bottleneck=False,
         *args, **kwargs
     ):
         """
@@ -312,6 +313,11 @@ class Model(CoreModule):
                 language prediction is made and directly feeds into the
                 action prediction.  Only applies if `incl_lang_inpt` is
                 true.
+            bottleneck: bool
+                if true, only the language predictions are fed into
+                the action module. i.e. no vision is fed into the action
+                module. Otherwise, both lang and vision are fed into
+                actn module. Only applies if using incl_lang_inpt
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -370,6 +376,7 @@ class Model(CoreModule):
         self.fc_lnorm = fc_lnorm
         self.fc_bnorm = fc_bnorm
         self.stagger_preds = stagger_preds
+        self.bottleneck = bottleneck
 
     def initialize_conditional_variables(self):
         """
@@ -1408,9 +1415,25 @@ class VaryLSTM(Model):
         fx = fx.reshape(len(x), -1) # (B, N)
         inpt = [fx, cdtnl]
         if self.incl_lang_inpt:
-            prev_lang = self.lang if lang_inpt is None else lang_inpt
-            consol = self.lang_consolidator(prev_lang)
-            inpt.append(consol)
+            inpt.append(torch.zeros(
+                (len(fx), self.h_size),
+                device=self.get_device())
+            )
+            cat = torch.cat(inpt, dim=-1)
+            h, _ = self.lstm( cat, (self.h, self.c) )
+            if self.lnorm:
+                h = self.layernorm_h(h)
+            langs = []
+            for dense in self.lang_denses:
+                langs.append(dense(h))
+            lang = self.process_lang_preds(langs)
+            consol = self.lang_consolidator(lang)
+            if self.bottleneck:
+                inpt = [
+                  torch.zeros_like(fx), torch.zeros_like(cdtnl), consol
+                ]
+            else:
+                inpt = [fx, cdtnl, consol]
         cat = torch.cat(inpt, dim=-1)
         self.h, self.c = self.lstm( cat, (self.h, self.c) )
         if self.lnorm:
@@ -1612,26 +1635,27 @@ class SeparateLSTM(LSTMOffshoot):
     independently. Then two sequential LSTMs for the actions that
     receives a cut-gradient language input.
     """
-    def __init__(self, next_step_lang=False, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         """
-        next_step_lang: bool
-            if false, language inputs from the current time step are
-            fed into the action LSTM. if true, the language from the
-            previous step is used as inputs.
         """
         super().__init__(*args, **kwargs)
-        if not self.incl_lang_inpt: print("SeparateLSTM always includes lang input")
-        self.next_step_lang = next_step_lang
+        if not self.incl_lang_inpt:
+            print("SeparateLSTM always includes lang input")
         self.n_lstms = 3
         self.n_lang_denses = 1
 
         size = self.flat_size + self.h_size # add hsize for condtional
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
 
+        if self.bottleneck:
+            self.lstm = nn.LSTMCell(self.h_size, self.h_size)
+
         size = self.h_size
         if self.skip_lstm:
+            assert not self.bottleneck,\
+                        "bottleneck and skip_lstm are incompatible"
             # add additional h_size here for conditional input
-            size = self.h_size + size
+            size = self.h_size + size + self.flat_size
         self.actn_lstm = nn.LSTMCell(size, self.h_size)
 
         if self.learn_h:
@@ -1688,14 +1712,12 @@ class SeparateLSTM(LSTMOffshoot):
         )
         lang = self.lang_denses[0](lang_h)
 
-        if self.next_step_lang:
-            prev_lang = self.lang if lang_inpt is None else lang_inpt
-            consol = self.lang_consolidator(prev_lang[mask])
+        consol = self.lang_consolidator(self.process_lang_preds([lang]))
+        if self.bottleneck:
+            cat = consol
         else:
-            prev_lang = self.process_lang_preds([lang])
-            consol = self.lang_consolidator(prev_lang)
-        inpt.append(consol)
-        cat = torch.cat(inpt, dim=-1)
+            inpt.append(consol)
+            cat = torch.cat(inpt, dim=-1)
 
         h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
         if self.lnorm:
@@ -1727,8 +1749,6 @@ class SeparateLSTM(LSTMOffshoot):
         temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
         temp_actn[mask] = actn
         temp_lang[mask] = lang
-        if self.next_step_lang:
-            self.lang = self.process_lang_preds([temp_lang])
         return temp_actn, [temp_lang]
 
     def forward(self,x,dones,tasks,masks,lang_inpts=None,*args,**kwargs):
@@ -2006,7 +2026,12 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 langs.append(dense(h))
             lang = self.process_lang_preds(langs)
             consol = self.lang_consolidator(lang)
-            inpt = [fx, cdtnl, consol]
+            if self.bottleneck:
+                inpt = [
+                  torch.zeros_like(fx), torch.zeros_like(cdtnl), consol
+                ]
+            else:
+                inpt = [fx, cdtnl, consol]
         cat = torch.cat(inpt, dim=-1)
 
         h0, c0 = self.lstm0( cat, (self.hs[0], self.cs[0]) )
