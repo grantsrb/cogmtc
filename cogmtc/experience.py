@@ -692,7 +692,7 @@ class DataCollector:
         old_phase = self.phase_q.get()
         self.phase_q.put(phase)
 
-def sample_zipfian(hyps):
+def sample_zipfian(hyps, rand=None):
     """
     A helper function to sample from the zipfian distribution according
     to the hyperparameters.
@@ -700,6 +700,7 @@ def sample_zipfian(hyps):
     Args:
         hyps: dict
             the hyperparameters
+        rand: None or np Random Number Generator
     Returns:
         sample: int or None
             the sampled value if zipf_order is not none
@@ -707,7 +708,7 @@ def sample_zipfian(hyps):
     order = try_key(hyps, "zipf_order", None)
     if order is not None and order > 0:
         low, high = hyps["targ_range"]
-        return zipfian(low, high, order)
+        return zipfian(low, high, order, rand)
     return None
 
 class Runner:
@@ -827,7 +828,7 @@ class Runner:
             self.obs_deque,
             obs=None,
             reset=True,
-            n_targs=sample_zipfian(hyps)
+            n_targs=sample_zipfian(hyps, self.rand)
         )
         self.state_bookmark = state
         self.h_bookmark = None
@@ -911,7 +912,7 @@ class Runner:
                 self.obs_deque,
                 obs=None,
                 reset=True,
-                n_targs=sample_zipfian(self.hyps)
+                n_targs=sample_zipfian(self.hyps, self.rand)
             )
             model.reset(1)
         else:
@@ -961,7 +962,7 @@ class Runner:
                 self.obs_deque,
                 obs=obs,
                 reset=done,
-                n_targs=sample_zipfian(self.hyps)
+                n_targs=sample_zipfian(self.hyps, self.rand)
             )
             if done:
                 model.reset(1)

@@ -177,14 +177,16 @@ def sample_action(pi):
         actions[(cumu_sum >= rand_nums)&(actions < 0)] = i
     return actions
 
-def sample_numpy(pi):
+def sample_numpy(pi, rand=None):
     """
     Stochastically selects an index from the pi vectors.
 
     Args:
         pi: ndarray (N,) (must sum to 1 across last dim)
+        rand: None or random number generator
     """
-    rand_num = np.random.random()
+    if rand is None: rand = np.random
+    rand_num = rand.random()
     cumu_sum = 0
     action = 0
     for i in range(len(pi)):
@@ -200,7 +202,7 @@ def softmax(arr):
     arr = np.exp(arr-np.max(arr))
     return arr / np.sum(arr)
 
-def zipfian(low=1, high=9, order=1):
+def zipfian(low=1, high=9, order=1, rand=None):
     """
     Draws a single integer from low (inclusive) to high (inclusive) in
     which the probability is proportional to 1/k^order.
@@ -213,17 +215,18 @@ def zipfian(low=1, high=9, order=1):
         order: float
             the order of the exponent to weight the probability density
             for each possible value.
+        rand: None or random number generator
+            if None, uses np.random instead
     Returns:
         sample: int
             returns a sample drawn from the zipfian distribution.
     """
     if low == high: return low
     assert low < high and low > 0
-
     probs = np.arange(low, high+1).astype("float")
     probs = 1/(probs**order)
     probs = probs/probs.sum()
-    samp = sample_numpy(probs)
+    samp = sample_numpy(probs, rand=rand)
     return samp + low
 
 def get_piraha_labels(labels, n_items):
