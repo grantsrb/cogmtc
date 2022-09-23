@@ -75,6 +75,8 @@ def get_resume_checkpt(hyps, in_place=False, verbose=True):
             print("Could not resume due to epoch count")
             print("Performing fresh training")
         else:
+            if verbose:
+                print("Loading hyps from", resume_folder)
             temp_hyps = checkpt['hyps']
             for k,v in temp_hyps.items():
                 if k not in ignore_keys:
@@ -108,7 +110,7 @@ def training_exceeds_epochs(hyps, checkpt):
     elif "phase" in checkpt and checkpt["phase"] > 0:
         n_epochs = hyps["actn_epochs"]
     elif "n_epochs" in hyps: n_epochs = hyps["n_epochs"]
-    return (checkpt['epoch']>=n_epochs or n_epochs == -1)
+    return (checkpt['epoch']>=(n_epochs-1) or n_epochs == -1)
 
 def get_exp_num(exp_folder, exp_name, offset=0):
     """

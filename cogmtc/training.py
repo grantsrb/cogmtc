@@ -40,7 +40,7 @@ def train(rank, hyps, verbose=True):
 
     # If resuming, hyperparameters are updated appropriately.
     # Actual checkpoint is loaded later.
-    _, hyps = get_resume_checkpt(hyps)
+    _, hyps = get_resume_checkpt(hyps, verbose=verbose)
 
     # Set select defaults and seed
     hyps_default_manipulations(hyps)
@@ -144,7 +144,10 @@ def make_model(hyps):
     init_checkpt = try_key(hyps, "init_checkpt", None)
     lang_checkpt = try_key(hyps, "lang_checkpt", None)
     if folder is not None and folder != "":
-        checkpt, _ = get_resume_checkpt(hyps, in_place=False)
+        checkpt, _ = get_resume_checkpt(
+            hyps, in_place=False, verbose=False
+        )
+        print("Initializing model checkpoint from", folder)
         model.load_state_dict(checkpt["state_dict"])
     elif init_checkpt is not None and init_checkpt.strip()!="":
         print("Initializing from checkpoint", init_checkpt)
