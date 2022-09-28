@@ -1443,7 +1443,8 @@ class ValidationRunner(Runner):
                            incl_hs=False,
                            to_cpu=False,
                            n_eps=None,
-                           render=False):
+                           render=False,
+                           blank_lang=False):
         """
         Performs the actual rollouts using the model
 
@@ -1463,6 +1464,9 @@ class ValidationRunner(Runner):
             render: bool
                 if true, renders the play. can also be specified
                 through hyps.
+            blank_lang: bool
+                if true, blank language inputs are argued to the model's
+                step function.
         Returns:
             data: dict
                 keys: str
@@ -1533,13 +1537,18 @@ class ValidationRunner(Runner):
             k = self.hyps["env2idx"][self.env.env_type]
             idxs = model.cdtnl_idxs[k][None]
             cdtnl = model.cdtnl_lstm(idxs)
+        lang_inpt = None
         while ep_count < n_eps:
             # Collect the state of the environment
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
             # Get action prediction
+            if blank_lang: 
+                lang_inpt = torch.zeros(1,model.h_size,device=DEVICE)
             inpt = t_state[None].to(DEVICE)
-            actn_pred, lang_pred = model.step(inpt, cdtnl)
+            actn_pred, lang_pred = model.step(
+                inpt, cdtnl, lang_inpt=lang_inpt
+            )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
             if to_cpu: data["actn_preds"][-1] = actn_pred.cpu()
