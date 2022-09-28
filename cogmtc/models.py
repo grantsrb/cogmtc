@@ -149,6 +149,8 @@ class Model(CoreModule):
         learn_h=False,
         scaleshift=True,
         fc_lnorm=False,
+        c_lnorm=True,
+        lang_lnorm=False,
         fc_bnorm=False,
         stagger_preds=True,
         bottleneck=False,
@@ -297,6 +299,11 @@ class Model(CoreModule):
             fc_lnorm: bool
                 if true, adds a layernorm layer before each Linear
                 layer in the fully connected layers
+            c_lnorm: bool
+                if true, performs layernorm on all relevant c vectors
+            lang_lnorm: bool
+                if true, adds a layernorm layer before the language
+                lstm in the SeparateLSTM model
             fc_bnorm: bool
                 if true, adds a batchnorm layer before each Linear
                 layer in the fully connected layers
@@ -374,6 +381,8 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
+        self.c_lnorm = c_lnorm
+        self.lang_lnorm = lang_lnorm
         self.fc_bnorm = fc_bnorm
         self.stagger_preds = stagger_preds
         self.bottleneck = bottleneck
@@ -1658,6 +1667,11 @@ class SeparateLSTM(LSTMOffshoot):
             size = self.h_size + size + self.flat_size
         self.actn_lstm = nn.LSTMCell(size, self.h_size)
 
+        if self.lang_lnorm:
+            self.h_lang_lnorm = nn.LayerNorm(self.h_size)
+            if self.c_lnorm:
+                self.c_lang_lnorm = nn.LayerNorm(self.h_size)
+
         if self.learn_h:
             self.get_inits()
         self.reset(1)
@@ -1707,8 +1721,13 @@ class SeparateLSTM(LSTMOffshoot):
         inpt = [fx, cdtnl[mask]]
         cat = torch.cat(inpt, dim=-1)
 
+        h,c = (self.hs[2][mask], self.cs[2][mask])
+        if self.lang_lnorm:
+            h = self.h_lang_lnorm(h)
+            if self.c_lnorm:
+                c = self.c_lang_lnorm(c)
         lang_h, lang_c = self.lang_lstm(
-            cat, (self.hs[2][mask], self.cs[2][mask])
+            cat, (h,c)
         )
         lang = self.lang_denses[0](lang_h)
 
@@ -1721,8 +1740,9 @@ class SeparateLSTM(LSTMOffshoot):
 
         h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
         if self.lnorm:
-            c = self.layernorm_c(c)
             h = self.layernorm_h(h)
+            if self.c_lnorm:
+                c = self.layernorm_c(c)
 
         inpt = h
         if self.skip_lstm: 
@@ -1875,7 +1895,8 @@ class SymmetricLSTM(LSTMOffshoot):
 
         h, c = self.lstm( cat, (self.hs[0][mask], self.cs[0][mask]) )
         if self.lnorm:
-            c = self.layernorm_c(c)
+            if self.c_lnorm:
+                c = self.layernorm_c(c)
             h = self.layernorm_h(h)
 
         inpt = h
@@ -2036,8 +2057,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
         h0, c0 = self.lstm0( cat, (self.hs[0], self.cs[0]) )
         if self.lnorm:
-            c0 = self.layernorm_c(c0)
             h0 = self.layernorm_h(h0)
+            if self.c_lnorm:
+                c0 = self.layernorm_c(c0)
 
         inpt = h0
         if self.skip_lstm: inpt = torch.cat([cat,inpt],dim=-1)
@@ -2097,6 +2119,124 @@ class DoubleVaryLSTM(LSTMOffshoot):
             self.prev_cs.append([c.detach().data for c in self.cs])
             self.prev_langs.append(self.lang.detach().data)
         return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
+
+
+class NVaryLSTM(DoubleVaryLSTM):
+    """
+    A model with N LSTMs. 
+    The structure is such that each LSTM feeds into the next.
+    """
+    def __init__(self, n_lstms=3, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_lstms = n_lstms
+        assert not self.stagger_preds, "that's not what this model was made for!"
+        try:
+            del self.lstm0
+            del self.lstm1
+        except: pass
+
+        self.lstms = nn.ModuleList([])
+        self.lstms.append(self.lstm)
+        self.h_lnorms = nn.ModuleList([])
+        self.h_lnorms.append(self.layernorm_h)
+        self.c_lnorms = nn.ModuleList([])
+        self.c_lnorms.append(self.layernorm_c)
+
+        size = self.h_size
+        if self.skip_lstm: 
+            # Multiply h_size by two for the conditional input
+            size = self.flat_size+2*self.h_size
+        for _ in range(self.n_lstms-1):
+            self.lstms.append(nn.LSTMCell(size, self.h_size))
+            #self.h_lnorms.append(nn.LayerNorm(self.h_size))
+            #self.c_lnorms.append(nn.LayerNorm(self.c_size))
+        if self.learn_h: self.get_inits()
+        self.reset(1)
+        self.make_actn_dense()
+        self.make_lang_denses()
+
+    def step(self, x, cdtnl, lang_inpt=None, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+                a single step of observations
+            cdtnl: torch FloatTensor (B, E)
+                the conditional latent vectors
+            lang_inpt: None or LongTensor (B,M)
+                if not None and self.incl_lang_inpt is true, lang_inpts
+                are used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor (B, L)
+        """
+        if x.is_cuda:
+            for i in range(self.n_lstms):
+                self.hs[i] = self.hs[i].to(x.get_device())
+                self.cs[i] = self.cs[i].to(x.get_device())
+        fx = self.features(x)
+        fx = fx.reshape(len(x), -1) # (B, N)
+        inpt = [fx, cdtnl]
+
+        langs = []
+        if self.incl_lang_inpt:
+            inpt.append(torch.zeros(
+                (len(fx), self.h_size),
+                device=self.get_device())
+            )
+            cat = torch.cat(inpt, dim=-1)
+            h, _ = self.lstms[0]( cat, (self.hs[0], self.cs[0]) )
+            if self.lnorm:
+                h = self.h_lnorms[0](h)
+            if not self.stagger_preds:
+                for i in range(1,self.n_lstms):
+                    inpt = h
+                    if self.skip_lstm: inpt=torch.cat([cat,inpt],dim=-1)
+                    h, _ = self.lstms[i]( inpt,(self.hs[i],self.cs[i]) )
+            for dense in self.lang_denses:
+                langs.append(dense(h))
+            lang = self.process_lang_preds(langs)
+            consol = self.lang_consolidator(lang)
+            if self.bottleneck:
+                inpt = [
+                  torch.zeros_like(fx), torch.zeros_like(cdtnl), consol
+                ]
+            else:
+                inpt = [fx, cdtnl, consol]
+        cat = torch.cat(inpt, dim=-1)
+
+        hs = []
+        cs = []
+        h, c = self.lstms[0]( cat, (self.hs[0], self.cs[0]) )
+        if self.lnorm:
+            h = self.h_lnorms[0](h)
+            if self.c_lnorm:
+                c = self.c_lnorms[0](c)
+        hs.append(h)
+        cs.append(c)
+
+        for i in range(1,self.n_lstms):
+            inpt = h
+            if self.skip_lstm: inpt = torch.cat([cat,inpt],dim=-1)
+            h, c = self.lstms[i]( inpt, (self.hs[1], self.cs[1]) )
+            hs.append(h)
+            cs.append(c)
+
+        lang_in, actn_in = (hs[-1],hs[-1])
+        if self.stagger_preds:
+            lang_in, actn_in = (hs[-2],hs[-1]) if self.lstm_lang_first\
+                                               else (hs[-1],hs[-2])
+        if len(langs)==0:
+            for dense in self.lang_denses:
+                langs.append(dense(lang_in))
+        actn = self.actn_dense(actn_in)
+
+        self.hs = [*hs]
+        self.cs = [*cs]
+        self.lang = self.process_lang_preds(langs)
+        return self.output_fxn(actn), langs
 
 
 class SimpleLSTM(VaryLSTM):

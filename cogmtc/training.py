@@ -980,6 +980,12 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
+    if "bottleneck" in hyps and hyps["bottleneck"]:
+        hyps["rand_pdb"] = False
+        hyps["spacing_limit"] = 1
+        hyps["player_on_pile"] = True
+        hyps["sym_distr"] = False
+
     if "fc_norm" in hyps:
         print("found fc_norm in hyps, changing to fc_lnorm")
         hyps["fc_lnorm"] = hyps["fc_norm"]
@@ -1000,6 +1006,9 @@ def hyps_error_catching(hyps):
     if hyps["model_type"] == "SeparateLSTM":
         hyps["incl_lang_inpt"] = True
         print("updating incl_lang_inpt to true for SeparateLSTM")
+    elif hyps["model_type"] == "NVaryLSTM":
+        hyps["stagger_preds"] = False
+        print("Setting stagger_preds to false")
 
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:

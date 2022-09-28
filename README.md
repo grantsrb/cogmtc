@@ -332,6 +332,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         dispenser's initial position. If `rand_pdb` is false, the
         player and ending button will always be `spacing_limit` steps
         away symmetrically centered on the dispenser.
+    "sym_distr": bool
+        if false and `rand_pdb` is false, the player, dispenser, and
+        button are consistently distributed the same way at
+        initialization on every episode. Otherwise the initial
+        distribution is reflected about the yaxis with 50% prob. Only
+        applies when `rand_pdb` is false.
     "targ_range": list of ints (low, high)
         the range of potential target counts. This acts as the default
         if lang_range or actn_range are not specified. both low and
