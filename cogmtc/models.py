@@ -2074,6 +2074,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
                     langs.append(dense(h))
                 lang = self.process_lang_preds(langs)
 
+            # Need to do this regardless of argued lang_inpts
+            # to ensure hidden state vectors get updated
             if self.extra_lang_pred:
                 if cat is None: cat = torch.cat(inpt, dim=-1)
                 else: cat = cat[:,:-self.h_size].clone()
