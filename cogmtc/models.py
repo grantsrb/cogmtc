@@ -154,6 +154,7 @@ class Model(CoreModule):
         fc_bnorm=False,
         stagger_preds=True,
         bottleneck=False,
+        extra_lang_pred=False,
         *args, **kwargs
     ):
         """
@@ -325,6 +326,14 @@ class Model(CoreModule):
                 the action module. i.e. no vision is fed into the action
                 module. Otherwise, both lang and vision are fed into
                 actn module. Only applies if using incl_lang_inpt
+            extra_lang_pred: bool
+                if true, the DoubleVaryLSTM will include an extra
+                language prediction system that it will use for making
+                language predictions in the incl_lang_inpt cases
+                (emulating the behavior of the SeparateLSTM). This is
+                in addition to the DoubleVaryLSTM's usual
+                language predictions. Only relevant when using the
+                DoubleVaryLSTM model type and incl_lang_preds is true.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -386,6 +395,7 @@ class Model(CoreModule):
         self.fc_bnorm = fc_bnorm
         self.stagger_preds = stagger_preds
         self.bottleneck = bottleneck
+        self.extra_lang_pred = extra_lang_pred
 
     def initialize_conditional_variables(self):
         """
@@ -728,6 +738,7 @@ class InptConsolidationModule(nn.Module):
         Returns:
             fx: torch tensor (B, H)
         """
+        x = x.clone()
         x[x<0] = self.null_idx
 
         embs = self.embeddings(x)
@@ -1311,13 +1322,13 @@ class VaryLSTM(Model):
                 the average over the langs list then the argmax over L
                 or L//max_char_seq if using NUMERAL variants
         """
-        self.lang = langs[0].detach().data/len(langs)
+        lang = langs[0].detach().data/len(langs)
         for i in range(1,len(langs)):
-            self.lang += langs[i].detach().data/len(langs)
-        self.lang = torch.argmax(
-            self.lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            lang = lang + langs[i].detach().data/len(langs)
+        lang = torch.argmax(
+            lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
         ).long()
-        return self.lang
+        return lang
 
     def reset(self, batch_size=1):
         """
@@ -1733,11 +1744,10 @@ class SeparateLSTM(LSTMOffshoot):
         lang = self.lang_denses[0](lang_h)
 
         if lang_inpt is None:
-            lang_inpt = self.lang_consolidator(
-                self.process_lang_preds([lang])
-            )
+            lang_inpt = self.process_lang_preds([lang])
         else:
             lang_inpt = lang_inpt[mask]
+        lang_inpt = self.lang_consolidator( lang_inpt )
 
         if self.bottleneck:
             cat = lang_inpt
@@ -1999,12 +2009,19 @@ class DoubleVaryLSTM(LSTMOffshoot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.n_lstms = 2
+
         self.lstm0 = self.lstm
         size = self.h_size
         if self.skip_lstm: 
             # Multiply h_size by two for the conditional input
             size = self.flat_size+2*self.h_size
         self.lstm1 = nn.LSTMCell(size, self.h_size)
+
+        if self.extra_lang_pred and self.incl_lang_inpt:
+            self.n_lstms = 3
+            size = self.flat_size+self.h_size
+            self.lstm2 = nn.LSTMCell(size, self.h_size)
+
         if self.learn_h:
             self.get_inits()
         self.reset(1)
@@ -2028,7 +2045,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
         """
-        if x.is_cuda:
+        if x.is_cuda and not self.hs[0].is_cuda:
             for i in range(self.n_lstms):
                 self.hs[i] = self.hs[i].to(x.get_device())
                 self.cs[i] = self.cs[i].to(x.get_device())
@@ -2038,6 +2055,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
         langs = []
         if self.incl_lang_inpt:
+            cat = None
             if lang_inpt is None:
                 inpt.append(torch.zeros(
                     (len(fx), self.h_size),
@@ -2047,6 +2065,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 h, _ = self.lstm0( cat, (self.hs[0], self.cs[0]) )
                 if self.lnorm:
                     h = self.layernorm_h(h)
+
                 if not self.stagger_preds:
                     inpt = h
                     if self.skip_lstm: inpt=torch.cat([cat,inpt],dim=-1)
@@ -2054,7 +2073,19 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 for dense in self.lang_denses:
                     langs.append(dense(h))
                 lang = self.process_lang_preds(langs)
-                lang_inpt = self.lang_consolidator(lang)
+
+            if self.extra_lang_pred:
+                if cat is None: cat = torch.cat(inpt, dim=-1)
+                else: cat = cat[:,:-self.h_size].clone()
+                h2,c2 = self.lstm2( cat, (self.hs[2],self.cs[2]) )
+                temp = []
+                for dense in self.lang_denses:
+                    temp.append(dense(h2))
+                lang = self.process_lang_preds(temp)
+                langs = [*langs, *temp]
+
+            lang_inpt = lang if lang_inpt is None else lang_inpt
+            lang_inpt = self.lang_consolidator(lang_inpt)
             if self.bottleneck:
                 inpt = [
                   torch.zeros_like(fx),torch.zeros_like(cdtnl),lang_inpt
@@ -2083,6 +2114,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
         self.hs = [h0, h1]
         self.cs = [c0, c1]
+        if self.incl_lang_inpt and self.extra_lang_pred:
+            self.hs.append(h2)
+            self.cs.append(c2)
         self.lang = self.process_lang_preds(langs)
         return self.output_fxn(actn), langs
 
@@ -2117,7 +2151,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
             l = None if lang_inpts is None else lang_inpts[:,s]
             actn, lang = self.step(x[:,s], cdtnl[tasks[:,s]], l)
             actns.append(actn.unsqueeze(1))
-            if self.n_lang_denses == 1:
+            if self.n_lang_denses == 1 and not self.extra_lang_pred:
                 lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
             else:
                 lang = torch.stack(lang, dim=0).unsqueeze(2)# (N, B, 1, L)

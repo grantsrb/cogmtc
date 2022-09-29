@@ -186,6 +186,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         of the language output for the current timestep is included as
         input into the action prediction. If false,
         the language output is not included.
+    "extra_lang_pred": bool
+        if true, the DoubleVaryLSTM will include an extra
+        language prediction system that it will use for making
+        language predictions in the `incl_lang_inpt` cases
+        (emulating the behavior of the SeparateLSTM). This is
+        in addition to the DoubleVaryLSTM's usual
+        language predictions. Only relevant when using the
+        DoubleVaryLSTM model type and `incl_lang_preds` is true.
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
