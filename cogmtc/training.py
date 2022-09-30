@@ -1009,6 +1009,9 @@ def hyps_error_catching(hyps):
     elif hyps["model_type"] == "NVaryLSTM":
         hyps["stagger_preds"] = False
         print("Setting stagger_preds to false")
+    elif hyps["model_type"] == "DblBtlComboLSTM":
+        hyps["incl_lang_inpt"] = True
+        print("updating incl_lang_inpt to true for DblBtlComboLSTM")
 
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==-1:

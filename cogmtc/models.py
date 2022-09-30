@@ -334,6 +334,11 @@ class Model(CoreModule):
                 in addition to the DoubleVaryLSTM's usual
                 language predictions. Only relevant when using the
                 DoubleVaryLSTM model type and incl_lang_preds is true.
+
+                Also relevant if using the DblBtlComboLSTM. If this
+                is true, the model makes an extra language prediction
+                from the hidden state of the action lstm. Otherwise
+                the action lstm is unadulterated.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -1659,6 +1664,10 @@ class SeparateLSTM(LSTMOffshoot):
     def __init__(self, *args, **kwargs):
         """
         """
+        if "incl_lang_inpt" in kwargs and not kwargs["incl_lang_inpt"]:
+            kwargs["incl_lang_inpt"] = True
+            print("Setting incl_lang_inpt to true. "+\
+                    "SeparateLSTM always includes lang input")
         super().__init__(*args, **kwargs)
         if not self.incl_lang_inpt:
             print("SeparateLSTM always includes lang input")
@@ -2169,18 +2178,21 @@ class DblBtlComboLSTM(LSTMOffshoot):
     """
     A model with three LSTMs. The first, the lang lstm, maps from visual
     input to language prediction. Another, the bottleneck LSTM receives
-    this language input only with stopped gradients.  The last, the actn
-    lstm, recieves visual input only. A language prediction is made
-    from the hidden state of the actn LSTM. Then the hidden state from
+    this language input only, with stopped gradients. The last, the actn
+    lstm, recieves visual input only. Then the hidden state from
     the actn lstm is concatenated with the bottleneck lstm and used
     for action prediction.
     """
     def __init__(self, *args, **kwargs):
         """
         """
+        if "incl_lang_inpt" in kwargs and not kwargs["incl_lang_inpt"]:
+            kwargs["incl_lang_inpt"] = True
+            print("Setting incl_lang_inpt to true. "+\
+                    "DblBtlComboLSTM always includes lang input")
         super().__init__(*args, **kwargs)
         if not self.incl_lang_inpt:
-            print("SeparateLSTM always includes lang input")
+            assert False, "DblBtlComboLSTM needs incl_lang_inpt to be true"
         self.n_lstms = 3
         self.n_lang_denses = 1
 
@@ -2202,7 +2214,7 @@ class DblBtlComboLSTM(LSTMOffshoot):
             self.get_inits()
         self.reset(1)
 
-        self.make_actn_dense()
+        self.make_actn_dense(inpt_size=2*self.h_size)
         self.make_lang_denses()
 
     def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
@@ -2247,7 +2259,7 @@ class DblBtlComboLSTM(LSTMOffshoot):
         inpt = [fx, cdtnl[mask]]
         cat = torch.cat(inpt, dim=-1)
 
-        actn_h, actn_c = self.lstm(
+        actn_h, actn_c = self.actn_lstm(
             cat, (self.hs[0][mask], self.cs[0][mask])
         )
         if self.lnorm:
@@ -2265,7 +2277,8 @@ class DblBtlComboLSTM(LSTMOffshoot):
                 lang_c = self.c_lang_lnorm(lang_c)
         lang = self.lang_denses[0](lang_h)
         langs = [lang]
-        langs.append(self.lang_denses[0](actn_h))
+        if self.extra_lang_pred:
+            langs.append(self.lang_denses[0](actn_h))
 
         if lang_inpt is None:
             lang_inpt = self.process_lang_preds([lang])
@@ -2273,7 +2286,7 @@ class DblBtlComboLSTM(LSTMOffshoot):
             lang_inpt = lang_inpt[mask]
         lang_inpt = self.lang_consolidator( lang_inpt )
 
-        btl_h, btl_c = self.lstm( 
+        btl_h, btl_c = self.btl_lstm( 
             lang_inpt, (self.hs[1][mask], self.cs[1][mask])
         )
 
