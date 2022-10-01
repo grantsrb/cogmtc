@@ -185,7 +185,9 @@ def resume_epoch(trainer):
     if folder is not None and folder != "":
         checkpt = load_checkpoint(folder)
         if checkpt["phase"] == trainer.phase:
-            return try_key(checkpt,"epoch",0)
+            epoch = try_key(checkpt,"epoch",0)
+            if epoch > 0: epoch = epoch + 1
+            return epoch
     return 0
 
 def training_loop(n_epochs,
