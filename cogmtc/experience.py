@@ -247,6 +247,11 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 self.exp["lang_labels"],
                 self.exp["is_animating"]|self.exp["dones"]
             )
+        if try_key(self.hyps, "actnlish", False):
+            idx = ((self.exp["n_items"]>=self.exp["n_targs"])&\
+                            (self.exp["is_animating"]==0))|\
+                            (self.exp["is_pop"]==0)
+            self.exp["lang_labels"][idx] = self.exp["actns"][idx]
         self.clear_experience()
         return self.exp
 
@@ -560,21 +565,33 @@ class DataCollector:
         print("Max Steps:", self.hyps["max_steps"])
 
         self.hyps["max_char_seq"] = 1
+
+        # `lang_size` is the total number of language output possibilities
+        # All models have a STOP token at the end of their count words
+        # and a null_label just after the STOP token
+
         # Extra space for Null is included after ifelse statement
         self.hyps["max_lang_targ"] = lang_range[1]
-        self.hyps["lang_size"] = lang_range[1]+1 # plus one includes zero
+        n_words = lang_range[1]+1# plus one includes zero
         # If comparison or piraha language, must change lang_size
         if int(self.hyps["use_count_words"]) == INEQUALITY:
-            self.hyps["lang_size"] = 3
+            n_words = 3
         elif int(self.hyps["use_count_words"]) == PIRAHA:
-            self.hyps["lang_size"] = 4
+            n_words = 4
         elif int(self.hyps["use_count_words"]) == DUPLICATES:
-            self.hyps["lang_size"] = self.hyps["lang_size"]*2
+            n_words = n_words*2
+        self.hyps["lang_size"] = n_words
+        self.hyps["n_count_words"] = n_words
+
         if int(self.hyps["use_count_words"]) == NUMERAL:
             self.hyps["numeral_base"]=try_key(self.hyps,"numeral_base",4)
             base = self.hyps["numeral_base"]
             # Add 1 to base for the STOP token
-            self.hyps["lang_size"] = base+1
+            self.hyps["lang_size"] = base
+            self.hyps["n_count_words"] = base
+            # May need this but I'm pretty sure you don't
+            #self.hyps["lang_size"] += 1
+
             # Attempting to determine the maximum character sequence
             # length for predicting the systematic number system with
             # base `hyps["numeral_base"]`. We add 1 to the sequence
@@ -582,17 +599,19 @@ class DataCollector:
             # generalization
             mcs = int(math.ceil(math.log((lang_range[1]+1),base))+2)
             self.hyps["max_char_seq"] = mcs
-            self.hyps["STOP"] = self.hyps["numeral_base"]
-            self.hyps["lang_size"] += 1
         else:
             self.hyps["numeral_base"] = None
             self.hyps["max_char_seq"] = None
             self.hyps["lstm_lang"] = None
-            self.hyps["STOP"] = self.hyps["lang_size"]
-            self.hyps["lang_size"] += 1
+
+        self.hyps["STOP"] = self.hyps["lang_size"]
+        self.hyps["lang_size"] += 1 # for STOP prediction
         self.hyps["null_label"] = self.hyps["lang_size"]
         self.hyps["lang_size"] += 1 # For NULL prediction
         self.hyps["lang_offset"] = 0
+        if self.hyps["actnlish"]:
+            self.hyps["lang_size"] += self.hyps["actn_size"]
+            self.hyps["lang_offset"] = self.hyps["actn_size"]
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
         self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
         self.validator.hyps["max_lang_targ"] = self.hyps["max_lang_targ"]
@@ -1192,6 +1211,11 @@ class ValidationRunner(Runner):
                         lang_labels,
                         data["is_animating"]|data["dones"]
                     )
+                if try_key(self.hyps,"actnlish", False):
+                    idx = ((data["n_items"]>=data["n_targs"])&\
+                          (data["is_animating"]==0))|(data["is_pop"]==0)
+                    lang_labels[idx] = data["actn_targs"][idx]
+
                 drops = ExperienceReplay.get_drops(
                     self.hyps,
                     data["n_items"],
@@ -1472,7 +1496,7 @@ class ValidationRunner(Runner):
         Returns:
             data: dict
                 keys: str
-                vals: shared torch tensors
+                vals: torch tensors
                     actn_preds: float tensor (N, A)
                         Collects the predictions of the model for each
                         timestep t
@@ -1594,17 +1618,22 @@ class ValidationRunner(Runner):
                     "-- N_Items:", info["n_items"]
                 )
 
-                lang_targ = get_lang_labels(
-                    torch.LongTensor([info["n_items"]]),
-                    torch.LongTensor([info["n_targs"]]),
-                    max_targ=self.hyps["max_lang_targ"],
-                    use_count_words=self.hyps["use_count_words"],
-                    base=self.hyps["numeral_base"],
-                    max_char_seq=self.hyps["max_char_seq"],
-                    lang_offset=self.hyps["lang_offset"],
-                    null_label=self.hyps["null_label"],
-                    stop_label=self.hyps["STOP"]
-                ).item()
+                if try_key(self.hyps,"actnlish", False) and\
+                         ((info["n_items"]>=info["n_targs"]) and\
+                         not info["is_animating"]) or not info["is_pop"]:
+                    lang_targ = targ
+                else:
+                    lang_targ = get_lang_labels(
+                        torch.LongTensor([info["n_items"]]),
+                        torch.LongTensor([info["n_targs"]]),
+                        max_targ=self.hyps["max_lang_targ"],
+                        use_count_words=self.hyps["use_count_words"],
+                        base=self.hyps["numeral_base"],
+                        max_char_seq=self.hyps["max_char_seq"],
+                        lang_offset=self.hyps["lang_offset"],
+                        null_label=self.hyps["null_label"],
+                        stop_label=self.hyps["STOP"]
+                    ).item()
                 print( "Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--", lang_targ)

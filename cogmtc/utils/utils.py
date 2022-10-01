@@ -361,8 +361,9 @@ def get_lang_labels(n_items,
             returns tensor of shape (N,M) when use_count_words is 5
     """
     labels = n_items.clone()
+    ctype = int(use_count_words)
     # positional numeral system
-    if int(use_count_words) == 5:
+    if ctype == NUMERAL:
         if null_label is None: null_label = base+2
         mcs = max_char_seq
         labels = get_numeral_labels(labels, base, mcs)
@@ -383,22 +384,22 @@ def get_lang_labels(n_items,
             labels += lang_offset
         return labels
 
-    if int(use_count_words) == 1:
+    if ctype == ENGLISH:
         if null_label is None: null_label = max_targ+1
         labels[n_items>max_targ] = null_label
-    elif int(use_count_words) == 0:
+    elif ctype == INEQUALITY:
         labels[n_items<n_targs] = 0
         labels[n_items==n_targs] = 1
         labels[n_items>n_targs] = 2
     # Piraha labels
-    elif int(use_count_words) == 2:
+    elif ctype == PIRAHA:
         labels = get_piraha_labels(labels, n_items)
     # Random labels
-    elif int(use_count_words) == 3:
+    elif ctype == RANDOM:
         labels = torch.randint(0, max_targ+1, labels.shape)
         if n_items.is_cuda: labels = labels.to(DEVICE)
     # Duplicate labels
-    elif int(use_count_words) == 4:
+    elif ctype == DUPLICATES:
         if null_label is None: null_label = max_targ+1
         labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
     labels += lang_offset

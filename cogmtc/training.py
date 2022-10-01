@@ -980,7 +980,7 @@ def hyps_error_catching(hyps):
             print("changing drop_perc_threshold to 0")
             hyps["drop_perc_threshold"] = 0
 
-    if "bottleneck" in hyps and hyps["bottleneck"]:
+    if try_key(hyps,"bottleneck",False) and not try_key(hyps,"actnlish",False):
         hyps["rand_pdb"] = False
         hyps["spacing_limit"] = 1
         hyps["player_on_pile"] = True

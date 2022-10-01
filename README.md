@@ -138,6 +138,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         3: random labels
         4: two equivalent labels exist for every label
         5: numeral system with argued base `numeral_base`
+    "actnlish": bool
+        if true, the language model is trained to predict the action
+        label for game steps in which the player has responded the
+        correct number of times after the animation phase and/or the
+        player is no longer on the pile.
     "numeral_base": int or None
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
