@@ -195,7 +195,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
                     )).float()
         self.info_keys = [
             "n_targs","n_items","n_aligned","grabs","disp_targs",
-            "is_animating",
+            "is_animating", "is_pop",
         ]
         for key in self.info_keys:
             self.shared_exp[key] = torch.zeros((
@@ -956,6 +956,7 @@ class Runner:
             self.shared_exp["disp_targs"][idx,i]=int(info["disp_targs"])
             anim = int(info["is_animating"])
             self.shared_exp["is_animating"][idx,i] = anim
+            self.shared_exp["is_pop"][idx,i] = int(info["is_pop"])
 
             state = next_state(
                 self.env,
@@ -1299,6 +1300,7 @@ class ValidationRunner(Runner):
         inpts["done"] = data["dones"][idxs]
         inpts["is_animating"] = data["is_animating"][idxs]
         inpts["ep_idx"] = data["ep_idx"][idxs]
+        inpts["is_pop"] = data["is_pop"][idxs]
         inpts = {k:v.cpu().data.numpy() for k,v in inpts.items()}
 
         df = pd.DataFrame(inpts)
@@ -1519,6 +1521,7 @@ class ValidationRunner(Runner):
             "grabs":[],
             "disp_targs":[],
             "is_animating":[],
+            "is_pop": [],
             "ep_idx":[],
         }
         self.hyps["rand_timing"] = False
@@ -1580,7 +1583,7 @@ class ValidationRunner(Runner):
             data["grabs"].append(info["grab"])
             data["ep_idx"].append(self.ep_idx)
             keys = ["n_targs","n_items","n_aligned",
-                    "disp_targs","is_animating"]
+                    "disp_targs","is_animating", "is_pop"]
             for k in keys: data[k].append(info[k])
 
             if render or self.hyps["render"]:
@@ -1629,7 +1632,7 @@ class ValidationRunner(Runner):
             data["actn_targs"] = torch.LongTensor(data["actn_targs"])
         data["rews"] = torch.FloatTensor(data["rews"])
         keys = ["dones", "grabs", "n_targs", "n_items", "n_aligned",
-                "disp_targs", "is_animating", "ep_idx"]
+                "disp_targs", "is_animating","is_pop", "ep_idx"]
         for k in keys: data[k] = torch.LongTensor(data[k])
         if incl_hs:
             if hasattr(model, "hs"):
