@@ -202,6 +202,7 @@ def record_session(hyps, model):
     model: torch nn.Module
         the model to be trained
     """
+    git_hash = hyps["git_hash"]
     sf = hyps['save_folder']
     if not os.path.exists(sf):
         os.mkdir(sf)
@@ -210,7 +211,6 @@ def record_session(hyps, model):
     with open(os.path.join(sf,h+".txt"),mode) as f:
         dt_string = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         f.write(dt_string)
-        git_hash = get_git_revision_hash()
         f.write("\nGit Hash: {}".format(git_hash))
         f.write("\n"+str(model)+'\n')
         for k in sorted(hyps.keys()):

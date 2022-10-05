@@ -8,7 +8,7 @@ import pandas as pd
 
 from cogmtc.utils.save_io import save_checkpt, save_best_checkpt
 from cogmtc.utils.utils import try_key
-from cogmtc.utils.training import get_exp_num, record_session, get_save_folder
+from cogmtc.utils.training import get_exp_num, record_session, get_save_folder, get_git_revision_hash
 
 class Recorder:
     """
@@ -32,6 +32,8 @@ class Recorder:
         self.df = None # Used to store a dataframe with the fxn to_df
         self.reset_stats()
         self.best_score = -np.inf
+        git_hash = get_git_revision_hash()
+        hyps["git_hash"] = git_hash
         # Initialize important variables
         hyps['save_root'] = try_key(hyps, 'save_root', "./")
         hyps["main_path"] = os.path.join(
