@@ -609,7 +609,7 @@ class DataCollector:
         self.hyps["null_label"] = self.hyps["lang_size"]
         self.hyps["lang_size"] += 1 # For NULL prediction
         self.hyps["lang_offset"] = 0
-        if self.hyps["actnlish"]:
+        if try_key(self.hyps,"actnlish",False):
             self.hyps["lang_size"] += self.hyps["actn_size"]
             self.hyps["lang_offset"] = self.hyps["actn_size"]
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
