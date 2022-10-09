@@ -1005,12 +1005,9 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
-    if hyps["model_type"] == "SeparateLSTM":
+    if hyps["model_type"] is in {"SeparateLSTM", "NSepLSTM"}:
         hyps["incl_lang_inpt"] = True
-        print("updating incl_lang_inpt to true for SeparateLSTM")
-    elif hyps["model_type"] == "NVaryLSTM":
-        hyps["stagger_preds"] = False
-        print("Setting stagger_preds to false")
+        print("updating incl_lang_inpt to true for SeparateLSTM variants")
     elif hyps["model_type"] == "DblBtlComboLSTM":
         hyps["incl_lang_inpt"] = True
         print("updating incl_lang_inpt to true for DblBtlComboLSTM")
