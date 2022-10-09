@@ -171,6 +171,16 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "model_type": str
         the name of the model class that you wish to use for the
         training. i.e. "SimpleCNN"
+    "n_lstms": int
+        the number of LSTMs to use in the model type. This only applies
+        for the NVaryLSTM and NSepLSTM variants. In the NVaryLSTM, the
+        `n_lstms` arg determines how many LSTMs are chained together for
+        the policy network. The language output is either off the
+        output from the first or last LSTM in the chain. For the
+        NSepLSTM model type, `n_lstms` creates a chain of `n_lstms`-1
+        LSTMs for the policy network and uses 1 LSTM for the language
+        prediction which is used to select an embedding as additional
+        input into the policy network's first LSTM.
     "lstm_lang": bool
         if true, and using numeral system, the language output will be
         done using an LSTM rather than a dense network.
