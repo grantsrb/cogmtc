@@ -1849,6 +1849,156 @@ class SeparateLSTM(LSTMOffshoot):
         return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
 
 
+class NSepLSTM(SeparateLSTM):
+    """
+    This is a generalization of the SeparateLSTM. n_lstms determines how
+    many LSTMs are used for the policy network. In all cases, only one
+    LSTM is used for language generation. The language output is used
+    to select an embedding that is fed into the first LSTM in the policy
+    network. No gradients are backpropagated into the language lstm from
+    the policy network.
+    """
+    def __init__(self, n_lstms=3, *args, **kwargs):
+        """
+        """
+        super().__init__(*args, **kwargs)
+        if not self.incl_lang_inpt:
+            print("SeparateLSTM variants always include lang input")
+        self.n_lstms = n_lstms # The number of LSTMs including the lang lstm 
+        self.n_lang_denses = 1
+        del self.actn_lstm
+
+        size = self.flat_size + self.h_size # add hsize for condtional
+        self.lang_lstm = nn.LSTMCell(size, self.h_size)
+
+        self.lstms = nn.ModuleList([
+            self.lstm
+        ])
+        del self.lstm
+
+        if self.bottleneck:
+            self.lstms[0] = nn.LSTMCell(self.h_size, self.h_size)
+
+        for i in range(2, self.n_lstms):
+            size = self.h_size
+            if self.skip_lstm:
+                assert not self.bottleneck,\
+                            "bottleneck and skip_lstm are incompatible"
+                # add additional h_size here for conditional input
+                size = self.h_size + size + self.flat_size
+            self.lstms.append( nn.LSTMCell(size, self.h_size) )
+
+        if self.learn_h:
+            self.get_inits()
+        self.reset(1)
+
+        self.make_actn_dense()
+        self.make_lang_denses()
+
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+                a single step of observations
+            cdtnl: torch FloatTensor (B, E)
+                the conditional latent vectors
+            mask: torch LongTensor or BoolTensor (B,)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
+            lang_inpt: None or LongTensor (B,M)
+                if not None and self.incl_lang_inpt is true, lang_inpt
+                is used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor [ (B, L) ]
+        """
+        # Not that the mask gets flipped to where 1 means keep the
+        # calculation in the data
+        if mask is None:
+            mask = torch.ones(x.shape[0]).long()
+        else:
+            mask = (1-mask)
+        mask = mask.bool() # bool is important for using the mask as an
+        # indexing tool
+        device = self.get_device()
+        self.lang = self.lang.to(device)
+        mask = mask.to(device)
+        for i in range(self.n_lstms):
+            self.hs[i] = self.hs[i].to(device)
+            self.cs[i] = self.cs[i].to(device)
+
+        fx = self.features(x[mask])
+        fx = fx.reshape(len(fx), -1) # (B, N)
+        inpt = [fx, cdtnl[mask]]
+        cat = torch.cat(inpt, dim=-1)
+
+        h,c = (self.hs[-1][mask], self.cs[-1][mask])
+        if self.lang_lnorm:
+            h = self.h_lang_lnorm(h)
+            if self.c_lnorm:
+                c = self.c_lang_lnorm(c)
+        lang_h, lang_c = self.lang_lstm(
+            cat, (h,c)
+        )
+        lang = self.lang_denses[0](lang_h)
+
+        if lang_inpt is None:
+            lang_inpt = self.process_lang_preds([lang])
+        else:
+            lang_inpt = lang_inpt[mask]
+        lang_inpt = self.lang_consolidator( lang_inpt )
+
+        if self.bottleneck:
+            cat = lang_inpt
+        else:
+            inpt.append(lang_inpt)
+            cat = torch.cat(inpt, dim=-1)
+
+        h, c = self.lstms[0]( cat, (self.hs[0][mask], self.cs[0][mask]) )
+        if self.lnorm:
+            h = self.layernorm_h(h)
+            if self.c_lnorm:
+                c = self.layernorm_c(c)
+        hs = [h]
+        cs = [c]
+
+        for i in range(1, len(self.lstms)):
+            inpt = h
+            if self.skip_lstm: 
+                inpt = [inpt, cat]
+                inpt = torch.cat(inpt, dim=-1)
+
+            h, c = self.lstms[i](
+                inpt, (self.hs[i][mask], self.cs[i][mask])
+            )
+            hs.append(h)
+            cs.append(c)
+
+        actn = self.actn_dense(hs[-1])
+
+        hs.append(lang_h)
+        cs.append(lang_c)
+
+        for i in range(len(self.hs)):
+            temp_h = torch.zeros_like(self.hs[i])
+            temp_h[mask] = hs[i]
+            self.hs[i] = temp_h
+            temp_c = torch.zeros_like(self.cs[i])
+            temp_c[mask] = cs[i]
+            self.cs[i] = temp_c
+
+        actn = self.output_fxn(actn)
+        temp_actn = torch.zeros(x.shape[0],actn.shape[-1],device=device)
+        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
+        temp_actn[mask] = actn
+        temp_lang[mask] = lang
+        return temp_actn, [temp_lang]
+
 
 class SymmetricLSTM(LSTMOffshoot):
     """
@@ -2374,7 +2524,6 @@ class NVaryLSTM(DoubleVaryLSTM):
     def __init__(self, n_lstms=3, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.n_lstms = n_lstms
-        assert not self.stagger_preds, "that's not what this model was made for!"
         try:
             del self.lstm0
             del self.lstm1
@@ -2425,32 +2574,8 @@ class NVaryLSTM(DoubleVaryLSTM):
         fx = fx.reshape(len(x), -1) # (B, N)
         inpt = [fx, cdtnl]
 
-        langs = []
         if self.incl_lang_inpt:
-            if lang_inpt is None:
-                inpt.append(torch.zeros(
-                    (len(fx), self.h_size),
-                    device=self.get_device())
-                )
-                cat = torch.cat(inpt, dim=-1)
-                h, _ = self.lstms[0]( cat, (self.hs[0], self.cs[0]) )
-                if self.lnorm:
-                    h = self.h_lnorms[0](h)
-                if not self.stagger_preds:
-                    for i in range(1,self.n_lstms):
-                        inpt = h
-                        if self.skip_lstm: inpt=torch.cat([cat,inpt],dim=-1)
-                        h, _ = self.lstms[i]( inpt,(self.hs[i],self.cs[i]) )
-                for dense in self.lang_denses:
-                    langs.append(dense(h))
-                lang = self.process_lang_preds(langs)
-                lang_inpt = self.lang_consolidator(lang)
-            if self.bottleneck:
-                inpt = [
-                  torch.zeros_like(fx), torch.zeros_like(cdtnl), lang_inpt
-                ]
-            else:
-                inpt = [fx, cdtnl, lang_inpt]
+            raise NotImplemented
         cat = torch.cat(inpt, dim=-1)
 
         hs = []
@@ -2471,12 +2596,12 @@ class NVaryLSTM(DoubleVaryLSTM):
             cs.append(c)
 
         lang_in, actn_in = (hs[-1],hs[-1])
-        if self.stagger_preds:
+        if self.stagger_preds and self.n_lstms>1:
             lang_in, actn_in = (hs[-2],hs[-1]) if self.lstm_lang_first\
                                                else (hs[-1],hs[-2])
-        if len(langs)==0:
-            for dense in self.lang_denses:
-                langs.append(dense(lang_in))
+        langs = []
+        for dense in self.lang_denses:
+            langs.append(dense(lang_in))
         actn = self.actn_dense(actn_in)
 
         self.hs = [*hs]
