@@ -1861,6 +1861,10 @@ class NSepLSTM(SeparateLSTM):
     """
     def __init__(self, n_lstms=3, *args, **kwargs):
         """
+        Args:
+            n_lstms: int
+                determines the total number of LSTMs in the model
+                including the language lstm
         """
         super().__init__(*args, **kwargs)
         if not self.incl_lang_inpt:
