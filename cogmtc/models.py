@@ -1677,6 +1677,7 @@ class SeparateLSTM(LSTMOffshoot):
         size = self.flat_size + self.h_size # add hsize for condtional
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
 
+        # Change existing lstm to proper input sizing
         if self.bottleneck:
             self.lstm = nn.LSTMCell(self.h_size, self.h_size)
 
