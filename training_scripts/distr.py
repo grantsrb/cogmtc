@@ -34,10 +34,14 @@ import math
 # tmux new-session -d -s \"myTempSession\" /opt/my_script.sh
 
 def distr_ranges(script, meta, rng_paths):
-    exp_name = load_json(meta["hyperparams"])["exp_name"]
+    hyps = load_json(meta["hyperparams"])
+    exp_name = hyps["exp_name"]
     stdout_folder = "./tmux_logs/"
     if not os.path.exists(stdout_folder):
         os.mkdir(stdout_folder)
+    path = os.path.join(hyps["save_root"],hyps["exp_name"])
+    if not os.path.exists(path):
+        os.mkdir( path )
 
     tmux_sesh = "tmux new -d -s"
     exe = "python3 {}".format(script)
@@ -98,7 +102,7 @@ def split_ranges(meta):
     hyper_q = deque()
     hyper_q = fill_hyper_q({},ranges,key_importances,hyper_q,idx=0)
 
-    # Divide up hyperranges equally amongst GPUs
+    # Divide up hyperranges amongst GPUs
     n_combos = math.ceil(len(hyper_q)/len(devices))
     rng_paths = []
     range_dict = {i:None for i in devices}
