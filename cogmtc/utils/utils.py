@@ -6,6 +6,7 @@ import json
 import os
 import cv2
 
+BASELINE = -1
 INEQUALITY = 0
 ENGLISH = 1
 PIRAHA = 2

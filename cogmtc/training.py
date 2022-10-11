@@ -3,7 +3,7 @@ import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
 from cogmtc.envs import NONVERBAL_TASK_NAMES
 from cogmtc.utils.save_io import load_checkpoint
-from cogmtc.utils.utils import try_key, get_loss_and_accs
+from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL
 from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
@@ -1013,7 +1013,7 @@ def hyps_error_catching(hyps):
         print("updating incl_lang_inpt to true for DblBtlComboLSTM")
 
     # Convert to No-Language Variant if -1 is argued
-    if hyps["use_count_words"]==-1:
+    if hyps["use_count_words"]==BASELINE:
         if hyps["model_type"] == "SeparateLSTM":
             hyps["model_type"] = "DoubleVaryLSTM"
         hyps["use_count_words"] = 1
@@ -1021,6 +1021,9 @@ def hyps_error_catching(hyps):
         hyps["skip_first_phase"] = True
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
+    if hyps["use_count_words"] == NUMERAL:
+        hyps["lstm_lang"] = True
+        print("setting lstm lang to true")
 
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]

@@ -40,6 +40,7 @@ def get_fcnet(inpt_size,
               bnorm=False,
               lnorm=False,
               scaleshift=True,
+              legacy=False,
               actv_fxn="ReLU"):
     """
     Defines a simple fully connected Sequential module
@@ -64,6 +65,8 @@ def get_fcnet(inpt_size,
         scaleshift: bool
             if true, a ScaleShift layer is added after the activation
             function
+        legacy: bool
+            if true, matches architecture of legacy models
     """
     outsize= h_size if n_layers > 1 else outp_size
     block = [  ]
@@ -71,10 +74,11 @@ def get_fcnet(inpt_size,
     prev_size = outsize
     for i in range(1, n_layers):
         block.append( GaussianNoise(noise) )
+        if legacy and lnorm: block.append( nn.LayerNorm(outsize) )
         block.append( nn.Dropout(drop_p) )
         block.append( globals()[actv_fxn]() )
         if bnorm: block.append( nn.BatchNorm1d(outsize) )
-        if lnorm: block.append( nn.LayerNorm(outsize) )
+        if not legacy and lnorm: block.append( nn.LayerNorm(outsize) )
         if scaleshift: block.append( ScaleShift((outsize,)) )
         if i+1 == n_layers: outsize = outp_size
         block.append( nn.Linear(prev_size, outsize) )
@@ -155,6 +159,7 @@ class Model(CoreModule):
         stagger_preds=True,
         bottleneck=False,
         extra_lang_pred=False,
+        legacy=False,
         *args, **kwargs
     ):
         """
@@ -339,6 +344,8 @@ class Model(CoreModule):
                 is true, the model makes an extra language prediction
                 from the hidden state of the action lstm. Otherwise
                 the action lstm is unadulterated.
+            legacy: bool
+                if true, the fc nets use a legacy architecture
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -401,6 +408,7 @@ class Model(CoreModule):
         self.stagger_preds = stagger_preds
         self.bottleneck = bottleneck
         self.extra_lang_pred = extra_lang_pred
+        self.legacy = legacy
 
     def initialize_conditional_variables(self):
         """
@@ -433,7 +441,8 @@ class Model(CoreModule):
             actv_fxn=self.actv_fxn,
             bnorm=self.fc_bnorm,
             lnorm=self.fc_lnorm,
-            scaleshift=self.scaleshift
+            scaleshift=self.scaleshift,
+            legacy=self.legacy
         )
 
     def make_lang_denses(self, inpt_size=None):
@@ -474,7 +483,8 @@ class Model(CoreModule):
                     actv_fxn=self.actv_fxn,
                     bnorm=self.fc_bnorm,
                     lnorm=self.fc_lnorm,
-                    scaleshift=self.scaleshift
+                    scaleshift=self.scaleshift,
+                    legacy=self.legacy
                 )
             self.lang_denses.append(dense)
 
@@ -572,6 +582,7 @@ class NumeralLangLSTM(nn.Module):
                        fc_lnorm=False,
                        fc_bnorm=False,
                        scaleshift=False,
+                       legacy=False,
                        *args,**kwargs):
         """
         Args:
@@ -599,7 +610,8 @@ class NumeralLangLSTM(nn.Module):
         self.scaleshift = scaleshift
         self.drop_p = drop_p
         self.actv_fxn = actv_fxn
-        self.lstm = ContainedLSTM(
+        self.legacy = legacy
+        self.lstm = GenerativeLSTM(
             self.h_size,self.h_size,lnorm=self.lnorm
         )
         self.dense = get_fcnet(
@@ -612,7 +624,8 @@ class NumeralLangLSTM(nn.Module):
             actv_fxn=self.actv_fxn,
             lnorm=self.fc_lnorm,
             bnorm=self.fc_bnorm,
-            scaleshift=self.scaleshift
+            scaleshift=self.scaleshift,
+            legacy=self.legacy
         )
 
     def forward(self, x):
@@ -636,11 +649,6 @@ class InptConsolidationModule(nn.Module):
     language or action prediction into a single vector representation
     to be used as input to an LSTM module in the next timestep.
 
-    It recieves a batch of vectors that will be processeed in line with
-    the LANGACTN_TYPES designations. This is especially useful for the
-    Numeral models that have variable length numeric outputs. This
-    class creates a single vector representation by either concatenation,
-    or through recurrent consolidation.
     """
     def __init__(self, lang_size,
                        use_count_words=None,
@@ -681,15 +689,12 @@ class InptConsolidationModule(nn.Module):
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
-            self.consolidator = nn.LSTMCell(self.h_size, self.h_size)
-            self.layernorm_h = nn.LayerNorm(self.h_size)
-            self.layernorm_c = nn.LayerNorm(self.h_size)
-        else:
-            self.consolidator = nn.Sequential(
-                nn.Linear(self.h_size, self.h_size),
-                nn.LayerNorm(self.h_size),
-                nn.ReLU()
-            )
+            self.lstm_consol = ContainedLSTM( self.h_size, self.h_size )
+        self.consolidator = nn.Sequential(
+            nn.Linear(self.h_size, self.h_size),
+            nn.LayerNorm(self.h_size),
+            nn.ReLU()
+        )
         self.proj = nn.Linear(self.h_size, self.h_size)
 
     def reshape_and_extract(self, inpt, *args, **kwargs):
@@ -703,9 +708,8 @@ class InptConsolidationModule(nn.Module):
         """
         if self.langactn_inpt_type == LANGACTN_TYPES.SOFTMAX:
             fxn = nn.functional.softmax
-        elif self.langactn_inpt_type == LANGACTN_TYPES.ONEHOT:
+        else:
             fxn = max_one_hot
-        else: raise NotImplemented
         og_shape = inpt.shape
         inpt = inpt.reshape((len(inpt), self.mcs, -1))
         # Fail safe so that a stop prediction always exists at last
@@ -713,6 +717,27 @@ class InptConsolidationModule(nn.Module):
         inpt[:, -1, self.STOP] = inpt[:,-1].max(-1)[0]+1
         inpt = fxn( inpt.float(), dim=-1 ).reshape(og_shape)
         return inpt
+
+    def get_mask(self, inpt, token, incl_token=False):
+        """
+        This returns a boolean mask for all indices following (and
+        potentially including) the first index that is equal to the
+        argued token in the inpt sequence.
+
+        inpt: torch tensor (B, S, N)
+            N must be divisible by self.mcs
+        token: int
+        incl_token: bool
+            if true, the mask includes the first occurence of the
+            argued token.
+        """
+        mask = (inpt==token).bool()
+        if not incl_token:
+            mask = mask.roll(1,dims=-1)
+            mask[:,0] = False
+        for i in range(1, self.mcs): # need loop for cumulative value
+            mask[:,i] = mask[:,i-1]|mask[:,i]
+        return mask
 
     def set_zero_after_stop(self, inpt, *args, **kwargs):
         """
@@ -748,23 +773,13 @@ class InptConsolidationModule(nn.Module):
 
         embs = self.embeddings(x)
         embs = self.dropout(embs)
-        if len(x.shape)==1:
+        if self.use_count_words == NUMERAL:
+            mask = self.get_mask(x, self.STOP, incl_token=True)
+            embs = self.lstm_consol(embs, mask)
+        if len(embs.shape)==2:
             outputs = self.consolidator(embs)
-        elif x.shape[1]==1:
+        elif embs.shape[1]==1:
             outputs = self.consolidator(embs[:,0])
-        else:
-            h = torch.zeros(len(x),self.h_size,device=x.get_device())
-            c = torch.zeros(len(x),self.h_size,device=x.get_device())
-            outputs = torch.zeros_like(h)
-            prev_idx = torch.zeros(len(x), device=x.get_device()).bool()
-            for i in range(x.shape[1]):
-                h,c = self.consolidator(embs[:,i], (h,c))
-                h = self.layernorm_h(h)
-                c = self.layernorm_c(c)
-                idx = ~prev_idx & (x[:,i]==self.STOP)
-                if torch.any(idx):
-                    outputs[idx] = h[idx]
-                    prev_idx = prev_idx | idx
         return self.proj(outputs)
 
 class NullModel(Model):
@@ -1316,9 +1331,9 @@ class VaryLSTM(Model):
 
     def process_lang_preds(self, langs):
         """
-        Assists in recording the language prediction that will potentially
-        be used in the next time step. Averages over the preds, reshapes
-        them and then takes the argmax
+        Assists in recording the language prediction that will
+        potentially be used in the next time step. Averages over the
+        preds, reshapes them and then takes the argmax
 
         Args:
             langs: list of torch FloatTensors [(B,L), (B,L), ...]

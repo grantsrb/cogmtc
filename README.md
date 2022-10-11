@@ -235,6 +235,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "bnorm": bool
         determines if the model should use batchnorm. true means it
         does use batchnorm
+    "legacy": bool
+        determines if the fc nets will take on a legacy architecture
     "lnorm": bool
         determines if the model should use layernorm. true means it
         does use layernorm on both the h and c recurrent vectors just

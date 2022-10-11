@@ -170,6 +170,48 @@ class NullOp(nn.Module):
 class ContainedLSTM(nn.Module):
     """
     Contained lstms handle all recurrent vectors for you. You simply
+    pass an input sequence to the forward function with the number of
+    outputs you would like. It returns the outputs as a tensor (B,N,H).
+    It also resets the h and c vectors at the beginning of each forward
+    pass.
+    """
+    def __init__(self, inpt_size, h_size, lnorm=True, *args, **kwargs):
+        super().__init__()
+        self.inpt_size = inpt_size
+        self.h_size = h_size
+        self.lstm = nn.LSTMCell(self.inpt_size, self.h_size)
+        self.lnorm = lnorm
+        if self.lnorm:
+            self.lnorm_h = nn.LayerNorm(self.h_size)
+        self.register_buffer('h', torch.zeros(1,self.h_size))
+        self.register_buffer('c', torch.zeros(1,self.h_size))
+
+    def forward(self, x, mask=None):
+        """
+        Args:
+            x: torch tensor (B, S, I)
+            mask: torch bool tensor (B,S)
+                a boolean tensor where true denotes that the end of the
+                sequence has been reached. These inputs are not
+                included.
+        Returns:
+            fx: torch tensor (B, H)
+        """
+        h = self.h.repeat(len(x), 1)
+        c = self.c.repeat(len(x), 1)
+        output = torch.zeros_like(h)
+        for i in range(x.shape[1]):
+            if self.lnorm:
+                h = self.lnorm_h(h)
+            h, c = self.lstm(x[:,i], (h,c))
+            if mask is not None:
+                output[~mask[:,i]] = h[~mask[:,i]]
+            else: output = h
+        return output
+
+class GenerativeLSTM(nn.Module):
+    """
+    This module handles all recurrent vectors for you. You simply
     pass the input in to the forward function with the number of
     outputs you would like. It returns the outputs as a tensor (B,N,H).
     It also resets the h and c vectors at the beginning of each forward
