@@ -975,6 +975,9 @@ def hyps_error_catching(hyps):
     """
     Here we can check that the hyperparameter configuration makes sense.
     """
+    if try_key(hyps, "numeral_base", None) is None:
+        hyps["numeral_base"] = 4
+
     if try_key(hyps,"blind_lang",False):
         print("Setting langall to true for blind lang")
         hyps["langall"] = True
