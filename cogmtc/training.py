@@ -755,6 +755,7 @@ class Trainer:
             data_collector: DataCollector
             shared_model: shared torch nn Module
         """
+        print("Ending training for", data_collector.hyps["save_folder"])
         data_collector.terminate_procs()
         keys = list(data_collector.exp_replay.shared_exp.keys())
         for k in keys:
