@@ -100,9 +100,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "runner_seed_offset": int
         An offset for the random seed for each of the parallel
         environments
-    "lang_epochs": int
+    "pre_epochs": int
+        the number of epochs used during pretraining
+    "n_epochs": int
+        the number of epochs used for the final phase of the
+        training.
+    "lang_epochs": int (deprecated for `pre_epochs` and `n_epochs`)
         The number of training epochs for the language training phase
-    "actn_epochs": int
+    "actn_epochs": int (deprecated for `pre_epochs` and `n_epochs`)
         The number of training epochs for the action training phase
 
     "trn_whls_epoch": int

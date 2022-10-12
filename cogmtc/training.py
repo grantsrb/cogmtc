@@ -92,8 +92,11 @@ def train(rank, hyps, verbose=True):
         print(s)
         data_collector.dispatch_runners()
         # Loop training
-        n_epochs = hyps["lang_epochs"] if first_phase==0 else\
-                   hyps["actn_epochs"]
+        if "pre_epochs" in hyps:
+            n_epochs = hyps["pre_epochs"]
+        else:
+            n_epochs = hyps["lang_epochs"] if first_phase==0 else\
+                       hyps["actn_epochs"]
         training_loop(
             n_epochs,
             data_collector,
@@ -115,8 +118,11 @@ def train(rank, hyps, verbose=True):
         hyps["lr"],
         try_key(hyps, "resume_folder", None)
     )
-    n_epochs = hyps["actn_epochs"] if first_phase==0 else\
-               hyps["lang_epochs"]
+    if "n_epochs" in hyps:
+        n_epochs = hyps["n_epochs"]
+    else:
+        n_epochs = hyps["actn_epochs"] if first_phase==0 else\
+                   hyps["lang_epochs"]
     s = "\n\nBeginning Second Phase: " + str(trainer.phase)
     recorder.write_to_log(s)
     print(s)
