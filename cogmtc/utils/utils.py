@@ -93,17 +93,21 @@ def resize2Square(img, size):
       mask[y_pos:y_pos+h, x_pos:x_pos+w, :] = img[:h, :w, :]
     return cv2.resize(mask, (size, size), interpolation)
 
-def rand_sample(arr, n_samples=1):
+def rand_sample(arr, n_samples=1, rand=None):
     """
     Uniformly samples a single element from the argued array.
 
     Args:
         arr: indexable sequence
+        rand: None or numpy random number generator
     """
     if not isinstance(arr,list): arr = list(arr)
-    if len(arr) == 0: print("len 0:", arr)
+    if len(arr) == 0:
+        print("len 0:", arr)
+        return None
+    if rand is None: rand = np.random
     samples = []
-    perm = np.random.permutation(len(arr))
+    perm = rand.permutation(len(arr))
     for i in range(n_samples):
         samples.append(arr[perm[i]])
     if len(samples) == 1: return samples[0]
@@ -160,7 +164,7 @@ def update_shape(shape, depth, kernel=3, padding=0, stride=1, op="conv"):
         heightwidth = (heightwidth - 1)*stride + kernel - 2*padding
     return (depth, *heightwidth)
 
-def sample_action(pi):
+def sample_action(pi, rand=None):
     """
     Stochastically selects an action from the pi vectors.
 
@@ -168,9 +172,11 @@ def sample_action(pi):
         pi: torch FloatTensor (..., N) (must sum to 1 across last dim)
             this is most likely going to be a model output vector that
             has passed through a softmax
+        rand: None or numpy random number generator
     """
+    if rand is None: rand = np.random
     pi = pi.cpu()
-    rand_nums = torch.rand(*pi.shape[:-1])
+    rand_nums = torch.from_numpy(rand.random(*pi.shape[:-1]))
     cumu_sum = torch.zeros(pi.shape[:-1])
     actions = -torch.ones(pi.shape[:-1])
     for i in range(pi.shape[-1]):
@@ -292,7 +298,7 @@ def get_piraha_labels(labels, n_items):
         labels[idx] = labs + 2
     return labels
 
-def get_duplicate_labels(labels, n_items, max_targ, null_label):
+def get_duplicate_labels(labels, n_items, max_targ, null_label,rand=None):
     """
     Converts the number of items that exist in the game (not
     including the targets) to a count word that is interchangeable
@@ -309,11 +315,15 @@ def get_duplicate_labels(labels, n_items, max_targ, null_label):
             the count of the items on the board
         max_targ: int
             the maximum value to label. 
+        rand: np random number generator
     Returns:
         labels: torch LongTensor
             the updated labels. operates in place 
     """
-    rand_vals = torch.randint(0,2,labels.shape)
+    if rand is None: rand = np.random
+    rand_vals = torch.from_numpy(
+        rand.random(labels.shape)*2
+    ).long()
     for i in range(0,max_targ*2+1,2):
         idx = n_items==(i//2)
         labels[idx] = i+rand_vals[idx]

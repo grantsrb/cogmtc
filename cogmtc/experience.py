@@ -1049,7 +1049,7 @@ class Runner:
             actn = torch.argmax(actn_pred[0]).item()
         else:
             actn = sample_action(
-                F.softmax(actn_pred, dim=-1)
+                F.softmax(actn_pred, dim=-1), rand=self.rand
             ).item()
         return actn
 
