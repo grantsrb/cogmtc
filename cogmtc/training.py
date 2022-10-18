@@ -1018,6 +1018,7 @@ def hyps_error_catching(hyps):
 
     if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM"}:
         hyps["incl_lang_inpt"] = True
+        hyps["n_lstms"] = max(2,try_key(hyps,"n_lstms",2))
         print("updating incl_lang_inpt to true for SeparateLSTM variants")
     elif hyps["model_type"] == "DblBtlComboLSTM":
         hyps["incl_lang_inpt"] = True
@@ -1026,7 +1027,10 @@ def hyps_error_catching(hyps):
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==BASELINE:
         if hyps["model_type"] == "SeparateLSTM":
-            hyps["model_type"] = "DoubleVaryLSTM"
+            hyps["model_type"] = "NVaryLSTM"
+            hyps["n_lstms"] = 2
+        elif hyps["model_type"] == "NSepLSTM":
+            hyps["model_type"] = "NVaryLSTM"
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
         hyps["skip_first_phase"] = True
@@ -1042,6 +1046,8 @@ def hyps_error_catching(hyps):
             try_key(hyps,"langall",False):
         print("Potential conflict between lang_targs_only and langall")
         print("langall takes precedence. lang will occur at all steps")
+    if try_key(hyps, "actnlish", False):
+        hyps["langall"] = True
     # Defaults here avoid errors in the future
     hyps["count_targs"] = True
     print("Setting count_targs to true")

@@ -1925,6 +1925,7 @@ class NSepLSTM(SeparateLSTM):
         super().__init__(*args, **kwargs)
         if not self.incl_lang_inpt:
             print("SeparateLSTM variants always include lang input")
+        if n_lstms < 2: print("NSepLSTM always has at least 2 lstms")
         self.n_lstms = n_lstms # The number of LSTMs including the lang lstm 
         self.n_lang_denses = 1
         del self.actn_lstm
