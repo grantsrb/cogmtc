@@ -3,7 +3,7 @@ import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
 from cogmtc.envs import NONVERBAL_TASK_NAMES
 from cogmtc.utils.save_io import load_checkpoint
-from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL
+from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, ACTIONS
 from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
@@ -987,6 +987,7 @@ def hyps_default_manipulations(hyps):
 def hyps_error_catching(hyps):
     """
     Here we can check that the hyperparameter configuration makes sense.
+    This prevents experimenter errors when setting the hyperparameters.
     """
     if try_key(hyps, "numeral_base", None) is None:
         hyps["numeral_base"] = 4
@@ -1041,9 +1042,12 @@ def hyps_error_catching(hyps):
         hyps["skip_first_phase"] = True
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
-    if hyps["use_count_words"] == NUMERAL:
+    elif hyps["use_count_words"] == NUMERAL:
         hyps["lstm_lang"] = True
         print("setting lstm lang to true")
+    elif hyps["use_count_words"] == ACTIONS:
+        hyps["actnlish"] = True
+        print("actnlish defaults to true for ACTIONS lang type")
 
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]
@@ -1053,7 +1057,6 @@ def hyps_error_catching(hyps):
         print("langall takes precedence. lang will occur at all steps")
     if try_key(hyps, "actnlish", False):
         hyps["langall"] = True
-    # Defaults here avoid errors in the future
     hyps["count_targs"] = True
     print("Setting count_targs to true")
     #if hyps["use_count_words"] == 0:

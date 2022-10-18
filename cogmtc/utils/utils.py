@@ -13,6 +13,7 @@ PIRAHA = 2
 RANDOM = 3
 DUPLICATES = 4
 NUMERAL = 5
+ACTIONS = 6
 
 PIRAHA_WEIGHTS = {
         3:   torch.FloatTensor([.55, .45]),
@@ -413,6 +414,8 @@ def get_lang_labels(n_items,
     elif ctype == DUPLICATES:
         if null_label is None: null_label = max_targ+1
         labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
+    elif ctype == ACTIONS:
+        labels = torch.zeros_like(labels)
     labels += lang_offset
     return labels
 

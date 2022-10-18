@@ -142,7 +142,7 @@ class Model(CoreModule):
         max_char_seq=1,
         STOP=1,
         null_idx=0,
-        lstm_lang=False,
+        lstm_lang=True,
         incl_lang_inpt=True,
         incl_actn_inpt=False,
         langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
