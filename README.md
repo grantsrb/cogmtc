@@ -188,7 +188,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         input into the policy network's first LSTM.
     "lstm_lang": bool
         if true, and using numeral system, the language output will be
-        done using an LSTM rather than a dense network.
+        done using an LSTM rather than a dense network. only applies
+        for NUMERAL systems.
     "lstm_lang_first": bool
         only used in multi-lstm model types. If true, the h
         vector from the first LSTM will be used as the input

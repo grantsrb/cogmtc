@@ -142,7 +142,7 @@ class Model(CoreModule):
         max_char_seq=1,
         STOP=1,
         null_idx=0,
-        lstm_lang=False,
+        lstm_lang=True,
         incl_lang_inpt=True,
         incl_actn_inpt=False,
         langactn_inpt_type=LANGACTN_TYPES.SOFTMAX,
@@ -664,7 +664,6 @@ class InptConsolidationModule(nn.Module):
     This is a module to assist in converting the raw output from a
     language or action prediction into a single vector representation
     to be used as input to an LSTM module in the next timestep.
-
     """
     def __init__(self, lang_size,
                        use_count_words=None,
