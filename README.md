@@ -147,7 +147,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if true, the language model is trained to predict the action
         label for game steps in which the player has responded the
         correct number of times after the animation phase and/or the
-        player is no longer on the pile.
+        player is no longer on the pile. Overrides `langall`
     "numeral_base": int or None
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
@@ -220,6 +220,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_inpt_drop_p": float [0,1]
         the dropout probability on the embeddings of the lang inputs.
         only applies if incl_lang_inpt is true
+    "bottleneck": bool
+        if true, with the NSepLSTM and SeparateLSTM, the input to the
+        action lstm(s) is only the language prediction. If `actnlish`
+        is false, the game will always spawn the agent in the same
+        position relative to the pile and ending button. Otherwise the
+        game is unsolvable.
 
     "output_fxn": str
         the name of the output function for the model. if no output
@@ -315,7 +321,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if false, language predictions only occur when the agent drops
         an object. Otherwise the language predictions occur at every
         step. defaults to false. this parameter overrides `count_targs`
-        and `lang_targs_only`
+        and `lang_targs_only`. overridden by actnlish
     "count_targs": bool
         LARGELY DEPRECATED!!! automatically set to false when
         `use_count_words` is 0, otherwise set to true.
