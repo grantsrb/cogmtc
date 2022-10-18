@@ -162,8 +162,14 @@ def make_model(hyps):
             model.load_state_dict(checkpt["state_dict"])
         except:
             sd = checkpt["state_dict"]
-            sd["cdtnl_idxs"] = model.state_dict()["cdtnl_idxs"]
-            sd["cnn.cdtnl_idxs"] = model.state_dict()["cnn.cdtnl_idxs"]
+            sync_keys = [
+                "cdtnl_idxs", "cnn.cdtnl_idxs", 
+                "lang_consolidator.embeddings.weight",
+                "lang_denses.0.5.weight",
+                "lang_denses.0.5.bias",
+            ]
+            for key in sync_keys:
+                sd[key] = model.state_dict()[key]
             model.load_state_dict(sd)
     elif lang_checkpt is not None and lang_checkpt.strip()!="":
         print("Loading language model", lang_checkpt)

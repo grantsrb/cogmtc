@@ -648,7 +648,6 @@ class InptConsolidationModule(nn.Module):
     This is a module to assist in converting the raw output from a
     language or action prediction into a single vector representation
     to be used as input to an LSTM module in the next timestep.
-
     """
     def __init__(self, lang_size,
                        use_count_words=None,
