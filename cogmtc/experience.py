@@ -411,14 +411,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
 
         if try_key(hyps, "langall", False):
             drops = torch.ones_like(n_items)
-        elif try_key(hyps, "lang_targs_only", 0) == 1:
+        elif int(try_key(hyps, "lang_targs_only", 0)) == 1:
             drops = is_animating.clone()
         else:
             block = len(n_items)//len(hyps["env_types"])
             drops = torch.zeros_like(n_items).long()
+            fxn = ExperienceReplay.get_drops_helper
             for i,env_type in enumerate(hyps["env_types"]):
                 temp = {**hyps, "env_type": env_type}
-                fxn = ExperienceReplay.get_drops_helper
                 drops[i*block:(i+1)*block] = fxn(
                     n_items[i*block:(i+1)*block],
                     is_animating[i*block:(i+1)*block],
@@ -459,8 +459,10 @@ class ExperienceReplay(torch.utils.data.Dataset):
                 a tensor denoting if the agent dropped an item with a 1,
                 0 otherwise. See WARNING in description
         """
+        # Every time n_items increases, we mark the preceeding index
         drops = pre_step_up(n_items)
         if not pre_grab_count:
+            # Every time n_items increases, we mark the succeeding index
             drops = drops | post_step_up(n_items)
         if count_targs:
             drops = drops | (is_animating>0)
