@@ -524,6 +524,7 @@ class Trainer:
                 obs.to(DEVICE),
                 dones=dones.to(DEVICE),
                 tasks=tasks.to(DEVICE),
+                n_targs=n_targs.to(DEVICE),
                 masks=masks.to(DEVICE),
                 lang_inpts=inps
             )

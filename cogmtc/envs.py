@@ -43,6 +43,7 @@ CONDITIONALS = {
   "gordongames-v9": "return all items to the pile object",
   "gordongames-v10": "press the pile object until the number "+\
                     "of items matches the number of targets",
+  "gordongames-v11": "press the number of objects",
 }
 CONDITIONALS = {
     **CONDITIONALS,
@@ -58,6 +59,8 @@ idx2word = {0: "null", **{i+1:k for i,k in enumerate(word_set)}}
 IDX_CONDITIONALS = {
  k: [word2idx[w] for w in v.split(" ")] for k,v in CONDITIONALS.items()
 }
+# A sequence of integers representing the tokenized conditional for
+# each environment
 TORCH_CONDITIONALS = {
  k: torch.LongTensor(v) for k,v in IDX_CONDITIONALS.items()
 }

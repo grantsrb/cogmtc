@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.multiprocessing as mp
 import numpy as np
 import cogmtc.models as models
-from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES
+from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES, CDTNL_LANG_SIZE
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL
 
@@ -939,6 +939,7 @@ class Runner:
             self.handle_model_bookmark(model)
         exp_len = self.hyps['exp_len']
         task = self.hyps["env2idx"][self.env.env_type]
+        give_n = model.add_n2cdtnls is not None
         if model.trn_whls<1:
             with torch.no_grad():
                 idxs = model.cdtnl_idxs[task][None]
@@ -951,6 +952,11 @@ class Runner:
             actn_targ = self.oracle(self.env, state=t_state) # int
             if self.rand.random()>model.trn_whls:
                 inpt = t_state[None].to(DEVICE)
+                cdt = cdtnl
+                if give_n: 
+                    idx = min(n_targs,model.max_train_targ)
+                    idx = idx + CDTNL_LANG_SIZE-1 # -1 because no 0 targ
+                    cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
                 actn_pred, _ = model.step(inpt, cdtnl)
                 actn = self.get_action(actn_pred)
             else:
@@ -1561,9 +1567,10 @@ class ValidationRunner(Runner):
             if self.hyps["exp_name"]=="test": n_eps = 1
         # Get the conditional vector
         with torch.no_grad():
-            k = self.hyps["env2idx"][self.env.env_type]
-            idxs = model.cdtnl_idxs[k][None]
+            task = self.hyps["env2idx"][self.env.env_type]
+            idxs = model.cdtnl_idxs[task][None]
             cdtnl = model.cdtnl_lstm(idxs)
+        give_n = model.add_n2cdtnls is not None
         lang_inpt = None
         while ep_count < n_eps:
             # Collect the state of the environment
@@ -1573,8 +1580,15 @@ class ValidationRunner(Runner):
             if blank_lang: 
                 lang_inpt = torch.zeros(1,model.h_size,device=DEVICE)
             inpt = t_state[None].to(DEVICE)
+
+            cdt = cdtnl
+            if give_n: 
+                idx = min(n_targs, model.max_train_targ)
+                idx = idx + CDTNL_LANG_SIZE-1 # -1 due to no 0 n_targs
+                cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
+
             actn_pred, lang_pred = model.step(
-                inpt, cdtnl, lang_inpt=lang_inpt
+                inpt, cdt, lang_inpt=lang_inpt
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)

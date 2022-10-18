@@ -160,6 +160,7 @@ class Model(CoreModule):
         bottleneck=False,
         extra_lang_pred=False,
         legacy=False,
+        targ_range=(1,17),
         *args, **kwargs
     ):
         """
@@ -290,6 +291,8 @@ class Model(CoreModule):
                 is used as input on the next time step are set to zero.
             use_count_words: int
                 the type of language training
+            targ_range: tuple of ints
+                the training target range, (low, high) inclusive
             max_ctx_len: int or None
                 the maximum context length for the transformer models
                 (not including the ViT)
@@ -353,6 +356,7 @@ class Model(CoreModule):
         self.actn_size = actn_size
         self.lang_size = lang_size
         self.h_size = h_size
+        self.max_train_targ = targ_range[-1]
         self.h_mult = h_mult
         self.bnorm = bnorm
         self.lnorm = lnorm
@@ -418,16 +422,28 @@ class Model(CoreModule):
         batch rows at the same time. At training time, we use 
         `repeat_interleave` to expand cdtnl_batch appropriately.
         """
+        if "gordongames-v11" in self.env_types:
+            lang_size = CDTNL_LANG_SIZE + self.max_train_targ
+        else: lang_size = CDTNL_LANG_SIZE 
         self.cdtnl_lstm = ConditionalLSTM(
-            self.h_size, lang_size=CDTNL_LANG_SIZE
+            self.h_size, lang_size=lang_size
         )
         max_len = max([len(v) for v in TORCH_CONDITIONALS.values()])
         cdtnl_idxs = torch.zeros(len(self.env_types),max_len).long()
+        add_n2cdtnls = []
         for env_type in self.env_types:
             k = self.env2idx[env_type]
             l = len(TORCH_CONDITIONALS[env_type])
             cdtnl_idxs[k,:l] = TORCH_CONDITIONALS[env_type]
+            if "gordongames-v11" == env_type:
+                add_n2cdtnls.append(k)
         self.register_buffer("cdtnl_idxs", cdtnl_idxs)
+        if len(add_n2cdtnls)>0:
+            self.register_buffer("add_n2cdtnls",
+                torch.LongTensor(add_n2cdtnls)
+            )
+        else:
+            self.add_n2cdtnls = None
 
     def make_actn_dense(self, inpt_size=None):
         if inpt_size==None: inpt_size = self.h_size
@@ -1813,7 +1829,9 @@ class SeparateLSTM(LSTMOffshoot):
         temp_lang[mask] = lang
         return temp_actn, [temp_lang]
 
-    def forward(self,x,dones,tasks,masks,lang_inpts=None,*args,**kwargs):
+    def forward(self,x,dones,tasks,masks,lang_inpts=None,
+                                         n_targs=None,
+                                         *args,**kwargs):
         """
         Args:
             x: torch FloatTensor (B, S, C, H, W)
@@ -1821,7 +1839,9 @@ class SeparateLSTM(LSTMOffshoot):
                 the done signals for the environment. the h and c
                 vectors are reset when encountering a done signal
             tasks: torch Long Tensor (B, S)
-                the task signal corresponding to each environment.
+                the task signal corresponding to each environment. This
+                is an integer that corresponds to the task index in
+                self.env2idx
             masks: torch LongTensor or BoolTensor (B,S)
                 Used to avoid continuing calculations in the sequence
                 when the sequence is over. Ones in the mask denote
@@ -1831,6 +1851,9 @@ class SeparateLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            n_targs: None or LongTensor (B,S)
+                only applies for gordongames-v11. this is a vector
+                indicating the number of target objects for the episode.
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
@@ -1845,19 +1868,37 @@ class SeparateLSTM(LSTMOffshoot):
         self.prev_langs = []
         if x.is_cuda:
             dones = dones.to(x.get_device())
+        give_n = self.add_n2cdtnls is not None
+        # Give n tasks are tasks in which the target quantity for the
+        # episode is given as a part of the conditional rather than
+        # the visual input.
+        if give_n:
+            # Shift and clip n_targs for correct embedding selection
+            n_targs = n_targs + CDTNL_LANG_SIZE
+            max_val = CDTNL_LANG_SIZE+self.max_train_targ
+            n_targs[n_targs>=max_val] = max_val-1
+
+            n_targ_embs = self.cdtnl_lstm.embs(n_targs)
+
+            # zero embs for the not give n type tasks
+            task_mask = torch.isin(tasks, self.add_n2cdtnls).float()
+            n_targ_embs = n_targ_embs*task_mask[...,None]
+
         for s in range(seq_len):
             if masks[:,s].sum() == len(masks):
                 actns.append(torch.zeros_like(actns[-1]))
                 langs.append(torch.zeros_like(langs[-1]))
             else:
                 lang_inpt=None if lang_inpts is None else lang_inpts[:,s]
+                cdt = cdtnl[tasks[:,s]]
+                # n_targs is 0 if not a give n type task
+                if give_n: cdt = cdt + n_targ_embs[:,s]
                 actn, lang = self.step(
-                  x[:,s], cdtnl[tasks[:,s]], masks[:,s], lang_inpt
+                  x[:,s], cdt, masks[:,s], lang_inpt
                 )
                 actns.append(actn.unsqueeze(1))
                 lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
                 langs.append(lang)
-
             self.hs, self.cs, self.lang = self.partial_reset(dones[:,s])
             self.prev_hs.append([h.detach().data for h in self.hs])
             self.prev_cs.append([c.detach().data for c in self.cs])
