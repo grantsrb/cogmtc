@@ -43,7 +43,7 @@ CONDITIONALS = {
   "gordongames-v9": "return all items to the pile object",
   "gordongames-v10": "press the pile object until the number "+\
                     "of items matches the number of targets",
-  "gordongames-v11": "press the number of objects",
+  "gordongames-v11": "press the number of items",
 }
 CONDITIONALS = {
     **CONDITIONALS,
