@@ -299,7 +299,7 @@ def get_piraha_labels(labels, n_items):
         labels[idx] = labs + 2
     return labels
 
-def get_duplicate_labels(labels, n_items, max_targ, null_label,rand=None):
+def get_duplicate_labels(labels, n_items, max_targ,null_label,rand=None):
     """
     Converts the number of items that exist in the game (not
     including the targets) to a count word that is interchangeable
@@ -397,7 +397,7 @@ def get_lang_labels(n_items,
         return labels
 
     if ctype == ENGLISH:
-        if null_label is None: null_label = max_targ+1
+        if null_label is None: null_label = max_targ-1
         labels[n_items>max_targ] = null_label
     elif ctype == INEQUALITY:
         labels[n_items<n_targs] = 0
@@ -412,7 +412,7 @@ def get_lang_labels(n_items,
         if n_items.is_cuda: labels = labels.to(DEVICE)
     # Duplicate labels
     elif ctype == DUPLICATES:
-        if null_label is None: null_label = max_targ+1
+        if null_label is None: null_label = max_targ-1
         labels = get_duplicate_labels(labels,n_items,max_targ,null_label)
     elif ctype == ACTIONS:
         labels = torch.zeros_like(labels)

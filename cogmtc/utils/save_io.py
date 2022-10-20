@@ -308,17 +308,17 @@ def load_model(path, models=None, load_sd=True, use_best=False,
     if "state_dict" in data and load_sd:
         print("loading state dict")
         try:
-            model.load_state_dict(checkpt["state_dict"])
+            model.load_state_dict(data["state_dict"])
         except:
             print("failed to load state dict, attempting fix")
             try:
-                n,h = checkpt["state_dict"]["cdtnl_lstm.embs.weight"].shape
+                n,h = data["state_dict"]["cdtnl_lstm.embs.weight"].shape
                 model.cdtnl_lstm.embs = torch.nn.Embedding(n,h)
                 model.cnn.cdtnl_lstm.embs = torch.nn.Embedding(n,h)
-                model.load_state_dict(checkpt["state_dict"])
+                model.load_state_dict(data["state_dict"])
             except:
                 del model.cnn
-                model.load_state_dict(checkpt["state_dict"])
+                model.load_state_dict(data["state_dict"])
             print("succeeded!")
             #sd = data["state_dict"]
             #keys = {*sd.keys(), *model.state_dict().keys()}
