@@ -831,8 +831,9 @@ def calc_lang_loss_and_accs(preds,
         drops = drops.repeat_interleave(n)
         categories = categories.repeat_interleave(n)
         masks = masks.repeat_interleave(n)
-    dmasks = (drops==1)&(masks==0)
+    dmasks = (drops.float()>=1)&(masks==0)
     idxs = dmasks&(labels>=0)
+    x = preds.mean(0).argmax(-1).reshape(-1)
     null_idxs = None
     if use_count_words==5: null_idxs = dmasks&(labels<0)
     categories = categories[idxs]
