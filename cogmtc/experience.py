@@ -1282,10 +1282,17 @@ class ValidationRunner(Runner):
                 else:
                     lang = torch.argmax(avg, dim=-1)  # (N,)
                 data["lang_preds"] = lang
+
                 idx = drops.bool().cpu()
-                lang = data["lang_preds"].cpu()[idx]
-                targ = data["lang_targs"].cpu()[idx]
-                lacc = (lang==targ).float().mean()
+                lang = lang.cpu()[idx].reshape(-1)
+                targ = lang_labels.cpu()[idx].reshape(-1)
+                lacc = torch.zeros(1)
+                try:
+                    lacc = (lang==targ).float().mean()
+                except:
+                    print("Error calculating lacc")
+                    print("lang:", lang.shape)
+                    print("targ:", targ.shape)
                 lang_acc += lacc.item()
 
                 # Save the results
