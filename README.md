@@ -152,6 +152,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
         the argued base instead of one-hot labels.
+    "rev_num": bool
+        if true, the InptConsolidationModule will reverse the
+        order of numerals up to the STOP token when processesing
+        language inputs. for example, the array [1,2,3,STOP]
+        will become [3,2,1,STOP]. only operates along the last dimension,
+        only applies to NUMERAL model types
     "skip_first_phase": bool
         if true, the training will skip phase 0 and go straight to
         phase 1 or 2 (depending on the value of `second_phase`).
