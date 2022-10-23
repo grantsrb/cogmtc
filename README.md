@@ -224,6 +224,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
+    "teacher_force_val": bool
+        if true, the correct language inputs are fed into the model
+        during validation.
     "lang_inpt_drop_p": float [0,1]
         the dropout probability on the embeddings of the lang inputs.
         only applies if incl_lang_inpt is true

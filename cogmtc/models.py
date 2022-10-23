@@ -1860,7 +1860,8 @@ class SeparateLSTM(LSTMOffshoot):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -1878,6 +1879,9 @@ class SeparateLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -1917,6 +1921,8 @@ class SeparateLSTM(LSTMOffshoot):
         else:
             lang_inpt = lang_inpt[mask]
         lang_inpt = self.lang_consolidator( lang_inpt )
+        if blank_lang:
+            lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -2009,7 +2015,8 @@ class NSepLSTM(SeparateLSTM):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2027,6 +2034,9 @@ class NSepLSTM(SeparateLSTM):
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the language inputs. only applies
+                if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -2066,6 +2076,8 @@ class NSepLSTM(SeparateLSTM):
         else:
             lang_inpt = lang_inpt[mask]
         lang_inpt = self.lang_consolidator( lang_inpt )
+        if blank_lang:
+            lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -2250,7 +2262,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, lang_inpt=None, *args, **kwargs):
+    def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                            *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2263,6 +2276,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
@@ -2310,6 +2326,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
             lang_inpt = lang if lang_inpt is None else lang_inpt
             lang_inpt = self.lang_consolidator(lang_inpt)
+            if blank_lang:
+                lang_inpt = torch.zeros_like(lang_inpt)
             if self.bottleneck:
                 inpt = [
                   torch.zeros_like(fx),torch.zeros_like(cdtnl),lang_inpt
@@ -2570,7 +2588,8 @@ class NVaryLSTM(DoubleVaryLSTM):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, lang_inpt=None, *args, **kwargs):
+    def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2583,6 +2602,9 @@ class NVaryLSTM(DoubleVaryLSTM):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)

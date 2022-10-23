@@ -35,7 +35,9 @@
     "lstm_lang_first": true,
 
     "incl_lang_inpt": false,
-    "lang_teacher_p": 0.9,
+    "actnlish": false,
+    "lang_teacher_p": 0,
+    "teacher_force_val": false,
     "lang_inpt_drop_p": 0.5,
 
     "output_fxn": null,
