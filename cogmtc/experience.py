@@ -1215,12 +1215,15 @@ class ValidationRunner(Runner):
         )
         if self.hyps["exp_name"] == "test":
             rainj = range(2,6)
+        tforce = try_key(self.hyps,"teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
-                data = self.collect_data(model, env_type, n_targs)
+                data = self.collect_data(
+                    model, env_type, n_targs, teacher_force=tforce
+                )
                 idx = data["dones"]==1
                 acc = (data["n_items"][idx] == n_targs).float().mean()
                 avg_acc += acc.item()
@@ -1521,6 +1524,7 @@ class ValidationRunner(Runner):
                            n_eps=None,
                            render=False,
                            blank_lang=False,
+                           teacher_force=False,
                            verbose=False):
         """
         Performs the actual rollouts using the model
@@ -1544,6 +1548,8 @@ class ValidationRunner(Runner):
             blank_lang: bool
                 if true, blank language inputs are argued to the model's
                 step function.
+            teacher_force: bool
+                if true, the model uses ground truth language inputs
         Returns:
             data: dict
                 keys: str
@@ -1617,13 +1623,15 @@ class ValidationRunner(Runner):
             cdtnl = model.cdtnl_lstm(idxs)
         give_n = model.add_n2cdtnls is not None
         lang_inpt = None
+        n_items = 0
         while ep_count < n_eps:
             # Collect the state of the environment
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
             # Get action prediction
-            if blank_lang: 
-                lang_inpt = torch.zeros(1,model.h_size,device=DEVICE)
+            if teacher_force:
+                label = n_items + self.hyps["lang_offset"]
+                lang_inpt = torch.zeros(1,1, device=DEVICE).long()+label
             inpt = t_state[None].to(DEVICE)
 
             cdt = cdtnl
@@ -1633,7 +1641,7 @@ class ValidationRunner(Runner):
                 cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
 
             actn_pred, lang_pred = model.step(
-                inpt, cdt, lang_inpt=lang_inpt
+                inpt, cdt, lang_inpt=lang_inpt, blank_lang=blank_lang
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
@@ -1654,6 +1662,7 @@ class ValidationRunner(Runner):
             # Step the environment (use oracle if phase 0)
             if self.phase == 0: actn = targ
             obs, rew, done, info = self.env.step(actn)
+            n_items = info["n_items"]
             state = next_state(
                 self.env,
                 self.obs_deque,
