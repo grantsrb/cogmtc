@@ -1214,7 +1214,7 @@ class ValidationRunner(Runner):
             self.hyps["targ_range"][1]+1
         )
         if self.hyps["exp_name"] == "test":
-            rainj = range(2,6)
+            rainj = list(range(2,4))+[17,18,19]
         tforce = try_key(self.hyps,"teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
@@ -1623,15 +1623,24 @@ class ValidationRunner(Runner):
             cdtnl = model.cdtnl_lstm(idxs)
         give_n = model.add_n2cdtnls is not None
         lang_inpt = None
-        n_items = 0
+        done = True
         while ep_count < n_eps:
             # Collect the state of the environment
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
             # Get action prediction
-            if teacher_force:
-                label = n_items + self.hyps["lang_offset"]
-                lang_inpt = torch.zeros(1,1, device=DEVICE).long()+label
+            if teacher_force and self.hyps["use_count_words"]==ENGLISH:
+                contr = self.env.env.controller
+                if contr.n_steps <= contr.n_targs:
+                    n_items = contr.n_steps
+                else: n_items = contr.register.n_items
+                label = min(
+                    n_items  + self.hyps["lang_offset"],
+                    model.lang_size-1
+                )
+                lang_inpt = torch.tensor([label], device=DEVICE).long()
+                prev_label = label
+
             inpt = t_state[None].to(DEVICE)
 
             cdt = cdtnl
@@ -1681,6 +1690,9 @@ class ValidationRunner(Runner):
             if render or self.hyps["render"]:
                 self.env.render()
             if verbose:
+                if teacher_force and self.hyps["use_count_words"]==ENGLISH:
+                    print()
+                    print("Label", label)
                 print("Use count words:", self.hyps["use_count_words"],
                     "-- Lang size:", model.lang_size,
                     "-- N_Targs:", info["n_targs"],
@@ -1709,8 +1721,13 @@ class ValidationRunner(Runner):
                 print("Actn (pred, targ)",
                     actn, "--", data["actn_targs"][-1])
                 if done:
-                    print( "Actn (pred, targ):",
-                        info["n_items"], "--", info["n_targs"])
+                    print("###############")
+                    if info["n_items"] == info["n_targs"]:
+                        print("SUCCESS!!")
+                    else:
+                        print("failure")
+                    print("###############")
+                    print()
                     print()
             if verbose or render or self.hyps["render"]:
                 time.sleep(1)

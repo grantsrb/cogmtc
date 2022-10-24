@@ -5,6 +5,7 @@ import cogmtc
 import sys
 from cogmtc.models import *
 import matplotlib.pyplot as plt
+from cogmtc.utils.utils import try_key
 
 """
 Must argue the path to a model folder for viewing. This script
@@ -14,7 +15,7 @@ $ python3 watch_model.py exp_name/model_folder/
 """
 render = False
 verbose = True
-targ_range = [15,22]
+targ_range = [1,7]
 
 if __name__ == "__main__":
     model_folder = sys.argv[1]
@@ -38,5 +39,6 @@ if __name__ == "__main__":
         print("EnvType:", env_type)
         val_runner.oracle = val_runner.oracles[env_type]
         data = val_runner.collect_data(
-            model, n_targs=None, env_type=env_type, verbose=verbose
+            model, n_targs=None, env_type=env_type, verbose=verbose,
+            teacher_force=try_key(hyps, "teacher_force_val", False)
         )

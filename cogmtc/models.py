@@ -2030,7 +2030,7 @@ class NSepLSTM(SeparateLSTM):
                 when the sequence is over. Ones in the mask denote
                 that the time step should be ignored, zeros should
                 be included.
-            lang_inpt: None or LongTensor (B,M)
+            lang_inpt: None or LongTensor (B,M) or (B,)
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
@@ -2044,11 +2044,9 @@ class NSepLSTM(SeparateLSTM):
         # Not that the mask gets flipped to where 1 means keep the
         # calculation in the data
         if mask is None:
-            mask = torch.ones(x.shape[0]).long()
+            mask = torch.ones(x.shape[0]).bool()
         else:
-            mask = (1-mask)
-        mask = mask.bool() # bool is important for using the mask as an
-        # indexing tool
+            mask = (1-mask).bool()
         device = self.get_device()
         self.lang = self.lang.to(device)
         mask = mask.to(device)
