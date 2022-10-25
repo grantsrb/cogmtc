@@ -161,6 +161,7 @@ class Model(CoreModule):
         extra_lang_pred=False,
         legacy=False,
         targ_range=(1,17),
+        rev_num=False,
         *args, **kwargs
     ):
         """
@@ -349,6 +350,11 @@ class Model(CoreModule):
                 the action lstm is unadulterated.
             legacy: bool
                 if true, the fc nets use a legacy architecture
+            rev_num: bool
+                if true, the InptConsolidationModule will reverse the
+                order of numerals up to the stop token when processesing
+                language inputs. for example, the array [1,2,3,STOP]
+                will become [3,2,1,STOP]
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -413,6 +419,7 @@ class Model(CoreModule):
         self.bottleneck = bottleneck
         self.extra_lang_pred = extra_lang_pred
         self.legacy = legacy
+        self.rev_num = rev_num
 
     def initialize_conditional_variables(self):
         """
@@ -672,6 +679,7 @@ class InptConsolidationModule(nn.Module):
                        STOP=1,
                        null_idx=0,
                        drop_p=0,
+                       rev_num=False,
                        *args,**kwargs):
         """
         Args:
@@ -690,6 +698,10 @@ class InptConsolidationModule(nn.Module):
                 index of NULL token (if one exists). only matters if
                 max_char_seq is greater than 1
             drop_p: float
+            rev_num: bool
+                if true, will reverse the order of numerals in the
+                last dimension up to the stop token when processing
+                the language inputs.
         """
         super().__init__()
         self.lang_size = lang_size
@@ -700,6 +712,7 @@ class InptConsolidationModule(nn.Module):
         self.STOP = STOP
         self.null_idx = null_idx
         self.drop_p = drop_p
+        self.rev_num = rev_num
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         self.dropout = nn.Dropout(p=self.drop_p)
@@ -775,6 +788,40 @@ class InptConsolidationModule(nn.Module):
         inpt = inpt*(1-mask.unsqueeze(-1))
         return inpt.reshape(og_shape)
 
+    @staticmethod
+    def reverse_numerals(x, stop_token):
+        """
+        Reverses the numerals in an array while keeping the stop
+        token in the same location. if no stop token exists in the
+        sequence, assumes last location is stop token.
+    
+        start: [1,2,3,STOP,a1,a2,...]
+        end:   [3,2,1,STOP,a1,a2,...]
+    
+        Args:
+            x: torch Long tensor (..., S)
+                the tensor to be reversed
+            stop_token: int
+                the token indicating the stop location
+        Returns:
+            rev: torch Long Tensor (..., S)
+                the reversed tensor
+        """
+        device = x.get_device()
+        og_shape = x.shape
+        x = x.clone().reshape(-1,x.shape[-1])
+        x[:,-1] = stop_token
+        stop_idxs = torch.argmax( (x==stop_token).float(), dim=-1 )
+        for i in range(1,x.shape[-1]):
+            rows = (stop_idxs==(i+1))
+            temp = x[rows]
+            if len(temp) > 0:
+                rev = torch.arange(i,-1,-1,device=device).long()
+                fwd = torch.arange(x.shape[-1], device=device).long()
+                fwd[:len(rev)] = rev
+                x[rows] = torch.index_select(temp, dim=-1, index=fwd)
+        return x.reshape(og_shape)
+
     def forward(self, x):
         """
         Args:
@@ -789,6 +836,8 @@ class InptConsolidationModule(nn.Module):
         embs = self.embeddings(x)
         embs = self.dropout(embs)
         if self.use_count_words == NUMERAL:
+            if self.rev_num:
+                x = InptConsolidationModule.reverse_numerals(x,self.STOP)
             mask = self.get_mask(x, self.STOP, incl_token=True)
             embs = self.lstm_consol(embs, mask)
         if len(embs.shape)==2:
@@ -1319,6 +1368,7 @@ class VaryLSTM(Model):
                 "STOP": self.STOP,
                 "drop_p": self.lang_inpt_drop_p,
                 "use_count_words": self.use_count_words,
+                "rev_num": self.rev_num,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -1810,7 +1860,8 @@ class SeparateLSTM(LSTMOffshoot):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -1828,6 +1879,9 @@ class SeparateLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -1867,6 +1921,8 @@ class SeparateLSTM(LSTMOffshoot):
         else:
             lang_inpt = lang_inpt[mask]
         lang_inpt = self.lang_consolidator( lang_inpt )
+        if blank_lang:
+            lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -1959,7 +2015,8 @@ class NSepLSTM(SeparateLSTM):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, mask=None,lang_inpt=None,*args,**kwargs):
+    def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -1973,10 +2030,13 @@ class NSepLSTM(SeparateLSTM):
                 when the sequence is over. Ones in the mask denote
                 that the time step should be ignored, zeros should
                 be included.
-            lang_inpt: None or LongTensor (B,M)
+            lang_inpt: None or LongTensor (B,M) or (B,)
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the language inputs. only applies
+                if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -1984,11 +2044,9 @@ class NSepLSTM(SeparateLSTM):
         # Not that the mask gets flipped to where 1 means keep the
         # calculation in the data
         if mask is None:
-            mask = torch.ones(x.shape[0]).long()
+            mask = torch.ones(x.shape[0]).bool()
         else:
-            mask = (1-mask)
-        mask = mask.bool() # bool is important for using the mask as an
-        # indexing tool
+            mask = (1-mask).bool()
         device = self.get_device()
         self.lang = self.lang.to(device)
         mask = mask.to(device)
@@ -2016,6 +2074,8 @@ class NSepLSTM(SeparateLSTM):
         else:
             lang_inpt = lang_inpt[mask]
         lang_inpt = self.lang_consolidator( lang_inpt )
+        if blank_lang:
+            lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -2172,57 +2232,6 @@ class SymmetricLSTM(LSTMOffshoot):
         self.lang = self.process_lang_preds([temp_lang])
         return temp_actn, [temp_lang]
 
-    def forward(self,x,dones,tasks,masks,lang_inpts=None,*args,**kwargs):
-        """
-        Args:
-            x: torch FloatTensor (B, S, C, H, W)
-            dones: torch Long Tensor (B, S)
-                the done signals for the environment. the h and c
-                vectors are reset when encountering a done signal
-            tasks: torch Long Tensor (B, S)
-                the task signal corresponding to each environment.
-            masks: torch LongTensor or BoolTensor (B,S)
-                Used to avoid continuing calculations in the sequence
-                when the sequence is over. Ones in the mask denote
-                that the time step should be ignored, zeros should
-                be included.
-            lang_inpts: None or LongTensor (B,S,M)
-                if not None and self.incl_lang_inpt is true, lang_inpts
-                are used as an additional input into the lstm. They
-                should be token indicies. M is the max_char_seq
-        Returns:
-            actns: torch FloatTensor (B, S, N)
-                N is equivalent to self.actn_size
-            langs: torch FloatTensor (N,B,S,L)
-        """
-        cdtnl = self.cdtnl_lstm(self.cdtnl_idxs)
-        seq_len = x.shape[1]
-        actns = []
-        langs = []
-        self.prev_hs = []
-        self.prev_cs = []
-        self.prev_langs = []
-        if x.is_cuda:
-            dones = dones.to(x.get_device())
-        for s in range(seq_len):
-            if masks[:,s].sum() == len(masks):
-                actns.append(torch.zeros_like(actns[-1]))
-                langs.append(torch.zeros_like(langs[-1]))
-            else:
-                lang_inpt=None if lang_inpts is None else lang_inpts[:,s]
-                actn, lang = self.step(
-                  x[:,s], cdtnl[tasks[:,s]], masks[:,s], lang_inpt
-                )
-                actns.append(actn.unsqueeze(1))
-                lang = lang[0].unsqueeze(0).unsqueeze(2) # (1, B, 1, L)
-                langs.append(lang)
-
-            self.hs, self.cs, self.lang = self.partial_reset(dones[:,s])
-            self.prev_hs.append([h.detach().data for h in self.hs])
-            self.prev_cs.append([c.detach().data for c in self.cs])
-            self.prev_langs.append(self.lang)
-        return ( torch.cat(actns, dim=1), torch.cat(langs, dim=2) )
-
 
 class DoubleVaryLSTM(LSTMOffshoot):
     """
@@ -2251,7 +2260,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, lang_inpt=None, *args, **kwargs):
+    def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                            *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2264,6 +2274,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
@@ -2311,6 +2324,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
 
             lang_inpt = lang if lang_inpt is None else lang_inpt
             lang_inpt = self.lang_consolidator(lang_inpt)
+            if blank_lang:
+                lang_inpt = torch.zeros_like(lang_inpt)
             if self.bottleneck:
                 inpt = [
                   torch.zeros_like(fx),torch.zeros_like(cdtnl),lang_inpt
@@ -2571,7 +2586,8 @@ class NVaryLSTM(DoubleVaryLSTM):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, lang_inpt=None, *args, **kwargs):
+    def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2584,6 +2600,9 @@ class NVaryLSTM(DoubleVaryLSTM):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, zeros out the lang inputs. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)

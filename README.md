@@ -152,6 +152,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
         the argued base instead of one-hot labels.
+    "rev_num": bool
+        if true, the InptConsolidationModule will reverse the
+        order of numerals up to the STOP token when processesing
+        language inputs. for example, the array [1,2,3,STOP]
+        will become [3,2,1,STOP]. only operates along the last dimension,
+        only applies to NUMERAL model types
     "skip_first_phase": bool
         if true, the training will skip phase 0 and go straight to
         phase 1 or 2 (depending on the value of `second_phase`).
@@ -218,6 +224,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
+    "teacher_force_val": bool
+        if true, the correct language inputs are fed into the model
+        during validation. Only implemented for ENGLISH language, no
+        `actnlish`
     "lang_inpt_drop_p": float [0,1]
         the dropout probability on the embeddings of the lang inputs.
         only applies if incl_lang_inpt is true

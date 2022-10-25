@@ -1214,13 +1214,16 @@ class ValidationRunner(Runner):
             self.hyps["targ_range"][1]+1
         )
         if self.hyps["exp_name"] == "test":
-            rainj = range(2,6)
+            rainj = list(range(2,4))+[17,18,19]
+        tforce = try_key(self.hyps,"teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
-                data = self.collect_data(model, env_type, n_targs)
+                data = self.collect_data(
+                    model, env_type, n_targs, teacher_force=tforce
+                )
                 idx = data["dones"]==1
                 acc = (data["n_items"][idx] == n_targs).float().mean()
                 avg_acc += acc.item()
@@ -1282,10 +1285,17 @@ class ValidationRunner(Runner):
                 else:
                     lang = torch.argmax(avg, dim=-1)  # (N,)
                 data["lang_preds"] = lang
+
                 idx = drops.bool().cpu()
-                lang = data["lang_preds"].cpu()[idx]
-                targ = data["lang_targs"].cpu()[idx]
-                lacc = (lang==targ).float().mean()
+                lang = lang.cpu()[idx].reshape(-1)
+                targ = lang_labels.cpu()[idx].reshape(-1)
+                lacc = torch.zeros(1)
+                try:
+                    lacc = (lang==targ).float().mean()
+                except:
+                    print("Error calculating lacc")
+                    print("lang:", lang.shape)
+                    print("targ:", targ.shape)
                 lang_acc += lacc.item()
 
                 # Save the results
@@ -1514,6 +1524,7 @@ class ValidationRunner(Runner):
                            n_eps=None,
                            render=False,
                            blank_lang=False,
+                           teacher_force=False,
                            verbose=False):
         """
         Performs the actual rollouts using the model
@@ -1537,6 +1548,8 @@ class ValidationRunner(Runner):
             blank_lang: bool
                 if true, blank language inputs are argued to the model's
                 step function.
+            teacher_force: bool
+                if true, the model uses ground truth language inputs
         Returns:
             data: dict
                 keys: str
@@ -1610,13 +1623,24 @@ class ValidationRunner(Runner):
             cdtnl = model.cdtnl_lstm(idxs)
         give_n = model.add_n2cdtnls is not None
         lang_inpt = None
+        done = True
         while ep_count < n_eps:
             # Collect the state of the environment
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
             # Get action prediction
-            if blank_lang: 
-                lang_inpt = torch.zeros(1,model.h_size,device=DEVICE)
+            if teacher_force and self.hyps["use_count_words"]==ENGLISH:
+                contr = self.env.env.controller
+                if contr.n_steps <= contr.n_targs:
+                    n_items = contr.n_steps
+                else: n_items = contr.register.n_items
+                label = min(
+                    n_items  + self.hyps["lang_offset"],
+                    model.lang_size-1
+                )
+                lang_inpt = torch.tensor([label], device=DEVICE).long()
+                prev_label = label
+
             inpt = t_state[None].to(DEVICE)
 
             cdt = cdtnl
@@ -1626,7 +1650,7 @@ class ValidationRunner(Runner):
                 cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
 
             actn_pred, lang_pred = model.step(
-                inpt, cdt, lang_inpt=lang_inpt
+                inpt, cdt, lang_inpt=lang_inpt, blank_lang=blank_lang
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
@@ -1647,6 +1671,7 @@ class ValidationRunner(Runner):
             # Step the environment (use oracle if phase 0)
             if self.phase == 0: actn = targ
             obs, rew, done, info = self.env.step(actn)
+            n_items = info["n_items"]
             state = next_state(
                 self.env,
                 self.obs_deque,
@@ -1665,6 +1690,9 @@ class ValidationRunner(Runner):
             if render or self.hyps["render"]:
                 self.env.render()
             if verbose:
+                if teacher_force and self.hyps["use_count_words"]==ENGLISH:
+                    print()
+                    print("Label", label)
                 print("Use count words:", self.hyps["use_count_words"],
                     "-- Lang size:", model.lang_size,
                     "-- N_Targs:", info["n_targs"],
@@ -1693,8 +1721,13 @@ class ValidationRunner(Runner):
                 print("Actn (pred, targ)",
                     actn, "--", data["actn_targs"][-1])
                 if done:
-                    print( "Actn (pred, targ):",
-                        info["n_items"], "--", info["n_targs"])
+                    print("###############")
+                    if info["n_items"] == info["n_targs"]:
+                        print("SUCCESS!!")
+                    else:
+                        print("failure")
+                    print("###############")
+                    print()
                     print()
             if verbose or render or self.hyps["render"]:
                 time.sleep(1)
