@@ -169,7 +169,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         language and actions.
     "blind_lang": bool
         if true, the observations are zeroed out during language 
-        training creating the effect of the model purely learning
+        training, creating the effect of the model purely learning
         language. If false, this variable is effectively ignorned.
         Defaults to False.
 
