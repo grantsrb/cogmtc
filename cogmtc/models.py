@@ -162,6 +162,7 @@ class Model(CoreModule):
         legacy=False,
         targ_range=(1,17),
         rev_num=False,
+        splt_feats=False,
         *args, **kwargs
     ):
         """
@@ -355,6 +356,11 @@ class Model(CoreModule):
                 order of numerals up to the stop token when processesing
                 language inputs. for example, the array [1,2,3,STOP]
                 will become [3,2,1,STOP]
+            splt_feats: bool
+                effectively creates a separate convolutional network
+                for the language pathway in the NSepLSTM variants.
+                This ensures that the language and policy pathways do
+                not overlap at all.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -420,6 +426,7 @@ class Model(CoreModule):
         self.extra_lang_pred = extra_lang_pred
         self.legacy = legacy
         self.rev_num = rev_num
+        self.splt_feats = splt_feats
 
     def initialize_conditional_variables(self):
         """
@@ -1047,15 +1054,22 @@ class VaryCNN(Model):
         modules = []
         shape = [*self.inpt_shape[-3:]]
         self.shapes = [shape]
+        adders = [0 for _ in self.depths]
+        groups = 1
+        if self.splt_feats:
+            for i in range(1,len(self.depths)):
+                adders[i] = self.depths[i]
+            groups = 2
         for i in range(len(self.depths)-1):
             # CONV
             modules.append(
                 nn.Conv2d(
-                    self.depths[i],
-                    self.depths[i+1],
+                    self.depths[i] + adders[i],
+                    self.depths[i+1] + adders[i+1],
                     kernel_size=self.kernels[i],
                     stride=self.strides[i],
-                    padding=self.paddings[i]
+                    padding=self.paddings[i],
+                    groups=max(int(groups*(i>0)), 1)
                 )
             )
             # RELU
@@ -2055,8 +2069,14 @@ class NSepLSTM(SeparateLSTM):
             self.cs[i] = self.cs[i].to(device)
 
         fx = self.features(x[mask])
+        lang_fx = fx
+        if self.splt_feats:
+            midpt = int(fx.shape[1]//2)
+            lang_fx = fx[:,:midpt]
+            fx = fx[:,midpt:]
+        lang_fx = lang_fx.reshape(len(lang_fx),-1)
         fx = fx.reshape(len(fx), -1) # (B, N)
-        inpt = [fx, cdtnl[mask]]
+        inpt = [lang_fx, cdtnl[mask]]
         cat = torch.cat(inpt, dim=-1)
 
         h,c = (self.hs[-1][mask], self.cs[-1][mask])
@@ -2080,7 +2100,7 @@ class NSepLSTM(SeparateLSTM):
         if self.bottleneck:
             cat = lang_inpt
         else:
-            inpt.append(lang_inpt)
+            inpt = [fx, cdtnl[mask], lang_inpt]
             cat = torch.cat(inpt, dim=-1)
 
         h, c = self.lstms[0]( cat, (self.hs[0][mask], self.cs[0][mask]) )
@@ -2566,12 +2586,10 @@ class NVaryLSTM(DoubleVaryLSTM):
             del self.lstm1
         except: pass
 
-        self.lstms = nn.ModuleList([])
-        self.lstms.append(self.lstm)
-        self.h_lnorms = nn.ModuleList([])
-        self.h_lnorms.append(self.layernorm_h)
-        self.c_lnorms = nn.ModuleList([])
-        self.c_lnorms.append(self.layernorm_c)
+        self.lstms = nn.ModuleList([self.lstm])
+        if self.lnorm:
+            self.h_lnorms = nn.ModuleList([self.layernorm_h])
+            self.c_lnorms = nn.ModuleList([self.layernorm_c])
 
         size = self.h_size
         if self.skip_lstm: 
