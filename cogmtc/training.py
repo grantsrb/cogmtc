@@ -1101,3 +1101,10 @@ def hyps_error_catching(hyps):
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
 
+    if "splt_feats" not in hyps and "splt_feat" in hyps:
+        hyps["splt_feats"] = hyps["splt_feat"]
+        del hyps["splt_feat"]
+        print("splt_feat does not exist, renaming to splt_feats")
+    if hyps["model_type"]!="NSepLSTM" and try_key(hyps,"splt_feats",False):
+        raise NotImplemented
+
