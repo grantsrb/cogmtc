@@ -168,8 +168,19 @@ def make_model(hyps):
                 "lang_denses.0.5.weight",
                 "lang_denses.0.5.bias",
             ]
+            mskeys = set(model.state_dict().keys())
+            sym_diff = mskeys.symmetric_difference(set(sd.keys()))
+            if len(sym_diff)>0:
+                print("State Dict Symmetric Difference")
+                for k in sym_diff: 
+                    if k in mskeys:
+                        print("MODEL:", k, model.state_dict()[k].shape)
+                    else:
+                        print("CHECKPT:", k, sd[k].shape)
+
             for key in sync_keys:
-                sd[key] = model.state_dict()[key]
+                if key in model.state_dict():
+                    sd[key] = model.state_dict()[key]
             model.load_state_dict(sd)
     elif lang_checkpt is not None and lang_checkpt.strip()!="":
         print("Loading language model", lang_checkpt)
