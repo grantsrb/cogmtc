@@ -1582,8 +1582,6 @@ class ValidationRunner(Runner):
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
             # Get action prediction
-            if blank_lang: 
-                lang_inpt = torch.zeros(1,model.h_size,device=DEVICE)
             inpt = t_state[None].to(DEVICE)
 
             cdt = cdtnl
@@ -1593,7 +1591,7 @@ class ValidationRunner(Runner):
                 cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
 
             actn_pred, lang_pred = model.step(
-                inpt, cdt, lang_inpt=lang_inpt
+                inpt, cdt, lang_inpt=lang_inpt, blank_lang=blank_lang
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
