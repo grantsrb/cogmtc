@@ -1044,6 +1044,7 @@ def hyps_error_catching(hyps):
             hyps["model_type"] = "NVaryLSTM"
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
+        hyps["splt_feats"] = False
         hyps["skip_first_phase"] = True
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
