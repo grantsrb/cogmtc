@@ -509,21 +509,14 @@ class Trainer:
             inps = None
             if try_key(self.hyps, "incl_lang_inpt", False):
                 # No teacher forcing by probability p
-                p = try_key(self.hyps, "lang_teacher_p", 0.9)
+                p = try_key(self.hyps, "lang_teacher_p", 0)
                 if np.random.random() < p:
-                    # Set initial label to be STOP
-                    s = labels.shape
-                    if len(s)==3:
-                        stop_label = torch.zeros(s[0],1,s[2])
-                        stop_label[:,:,0] = self.hyps["STOP"]
-                    else:
-                        stop_label=torch.zeros(s[0],1)+self.hyps["STOP"]
-                    inps = torch.cat([stop_label,labels[:,:-1]],dim=1)
-                    inps = inps.to(DEVICE).long()
+                    inps = labels.long()
                     if try_key(self.hyps,"shuffle_lang_inpts",False):
                         s = inps.shape
                         perm = torch.randperm(int(np.prod(s))).long()
                         inps = inps.reshape(-1)[perm].reshape(s)
+                    inps = inps.to(DEVICE)
 
             # model uses dones if it is recurrent
             logits, langs = model(
@@ -1096,4 +1089,11 @@ def hyps_error_catching(hyps):
     if "lstm_actn_inpt" in hyps and "incl_actn_inpt" not in hyps:
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
+
+    if "splt_feats" not in hyps and "splt_feat" in hyps:
+        hyps["splt_feats"] = hyps["splt_feat"]
+        del hyps["splt_feat"]
+        print("splt_feat does not exist, renaming to splt_feats")
+    if hyps["model_type"]!="NSepLSTM" and try_key(hyps,"splt_feats",False):
+        raise NotImplemented
 

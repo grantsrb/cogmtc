@@ -271,9 +271,10 @@ def load_model(path, models=None, load_sd=True, use_best=False,
     file. Or from a training save folder. Defaults to the last check
     point file saved in the save folder.
 
-    path: str
+    path: str or dict
         either .pt,.p, or .pth checkpoint file; or path to save folder
-        that contains multiple checkpoints
+        that contains multiple checkpoints. if dict, must be a checkpt
+        dict.
     models: dict (just pass `globals()` as the arg) or None
         A dict of the potential model classes. This function is
         easiest if you import each of the model classes in the calling
@@ -293,9 +294,11 @@ def load_model(path, models=None, load_sd=True, use_best=False,
     use_best: bool
         if true, will load the best model based on validation metrics
     """
-    path = os.path.expanduser(path)
-    hyps = None
-    data = load_checkpoint(path,use_best=use_best, phase=phase)
+    if type(path) == type(str()):
+        path = os.path.expanduser(path)
+        hyps = None
+        data = load_checkpoint(path,use_best=use_best, phase=phase)
+    else: data = path
     if 'hyps' in data:
         kwargs = data['hyps']
     else:
@@ -303,17 +306,20 @@ def load_model(path, models=None, load_sd=True, use_best=False,
     if models is None: models = cogmtc.models.__dict__
     model = models[kwargs['model_type']](**kwargs)
     if "state_dict" in data and load_sd:
+        print("loading state dict")
         try:
-            model.load_state_dict(data['state_dict'])
+            model.load_state_dict(data["state_dict"])
         except:
-            print("Failed to load state dict, attempting manual load")
-            sd = data["state_dict"]
-            modules = []
-            for modu in model.actn_dense:
-                if not isinstance(modu, torch.nn.LayerNorm):
-                    modules.append(modu)
-            model.actn_dense = torch.nn.Sequential( *modules )
-            print("Succeeded!")
+            print("failed to load state dict, attempting fix")
+            try:
+                n,h = data["state_dict"]["cdtnl_lstm.embs.weight"].shape
+                model.cdtnl_lstm.embs = torch.nn.Embedding(n,h)
+                model.cnn.cdtnl_lstm.embs = torch.nn.Embedding(n,h)
+                model.load_state_dict(data["state_dict"])
+            except:
+                del model.cnn
+                model.load_state_dict(data["state_dict"])
+            print("succeeded!")
             #sd = data["state_dict"]
             #keys = {*sd.keys(), *model.state_dict().keys()}
             #for k in keys:

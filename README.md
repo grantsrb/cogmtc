@@ -152,6 +152,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
         the argued base instead of one-hot labels.
+    "rev_num": bool
+        if true, the InptConsolidationModule will reverse the
+        order of numerals up to the STOP token when processesing
+        language inputs. for example, the array [1,2,3,STOP]
+        will become [3,2,1,STOP]. only operates along the last dimension,
+        only applies to NUMERAL model types
     "skip_first_phase": bool
         if true, the training will skip phase 0 and go straight to
         phase 1 or 2 (depending on the value of `second_phase`).
@@ -176,6 +182,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "model_type": str
         the name of the model class that you wish to use for the
         training. i.e. "SimpleCNN"
+    "splt_feats": bool
+        effectively creates a separate convolutional network
+        for the language pathway in the NSepLSTM variants.
+        This ensures that the language and policy pathways do
+        not overlap at all.
     "n_lstms": int
         the number of LSTMs to use in the model type. This only applies
         for the NVaryLSTM and NSepLSTM variants. In the NVaryLSTM, the
@@ -218,6 +229,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
+    "teacher_force_val": bool
+        if true, the correct language inputs are fed into the model
+        during validation. Only implemented for ENGLISH language, no
+        `actnlish`
     "lang_inpt_drop_p": float [0,1]
         the dropout probability on the embeddings of the lang inputs.
         only applies if incl_lang_inpt is true
@@ -375,6 +390,29 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         initialization on every episode. Otherwise the initial
         distribution is reflected about the yaxis with 50% prob. Only
         applies when `rand_pdb` is false.
+    "rand_pdb": bool
+        if true, the player, dispenser (aka pile), and ending button
+        are randomly distributed along the top row at the beginning of
+        the game. Otherwise they are deterministically set.
+    "player_on_pile": bool
+        if true, the player always starts on top of the dispenser pile
+        in counting games. If false, it will not.
+    "spacing_limit": int
+        if greater than 0, limits the spacing between the player and
+        dispenser, and the ending button and dispenser to be within
+        `spacing_limit` steps on either side of the dispenser's initial
+        position. If `rand_locs` is false, the player and ending
+        button will always be `spacing_limit` steps away symmetrically
+        centered on the dispenser.
+    "rand_timing": bool
+        if true, the timing of the initial display phase is stochastic
+        so that the agent cannot simply count the number of frames
+        rather than the number of target items.
+    "timing_p": float between 0 and 1
+        the probability of an animation step displaying the next target
+        object. A value of 1 means the agent could count the number of
+        frames instead of the number of target items. A value of 0 will
+        not allow the game to progress past the animation phase.
     "targ_range": list of ints (low, high)
         the range of potential target counts. This acts as the default
         if lang_range or actn_range are not specified. both low and
