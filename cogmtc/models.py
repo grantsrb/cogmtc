@@ -163,6 +163,7 @@ class Model(CoreModule):
         targ_range=(1,17),
         rev_num=False,
         splt_feats=False,
+        soft_attn=False,
         *args, **kwargs
     ):
         """
@@ -361,6 +362,13 @@ class Model(CoreModule):
                 for the language pathway in the NSepLSTM variants.
                 This ensures that the language and policy pathways do
                 not overlap at all.
+            soft_attn: bool
+                if true, language inputs in sep models will be an
+                attentional sum over the embeddings. Concretely, 
+                the softmax outputs will act as attention (qk) which is
+                applied over the embeddings (values). This creates a
+                single vector as input as the sum of all possible
+                embeddings.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -427,6 +435,7 @@ class Model(CoreModule):
         self.legacy = legacy
         self.rev_num = rev_num
         self.splt_feats = splt_feats
+        self.soft_attn = soft_attn
 
     def initialize_conditional_variables(self):
         """
@@ -687,6 +696,7 @@ class InptConsolidationModule(nn.Module):
                        null_idx=0,
                        drop_p=0,
                        rev_num=False,
+                       soft_attn=False,
                        *args,**kwargs):
         """
         Args:
@@ -709,6 +719,15 @@ class InptConsolidationModule(nn.Module):
                 if true, will reverse the order of numerals in the
                 last dimension up to the stop token when processing
                 the language inputs.
+            soft_attn: bool
+                if true, language inputs to LSTM will be an
+                attentional sum over the embeddings. In this module,
+                this means that instead of receiving token indices,
+                it will receive a softmax over the potential embeddings. 
+                This module will use the softmax as attention (qk) which
+                is applied over the embeddings (values). This creates a
+                single vector as input as the sum of all possible
+                embeddings.
         """
         super().__init__()
         self.lang_size = lang_size
@@ -720,6 +739,7 @@ class InptConsolidationModule(nn.Module):
         self.null_idx = null_idx
         self.drop_p = drop_p
         self.rev_num = rev_num
+        self.soft_attn = soft_attn
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         self.dropout = nn.Dropout(p=self.drop_p)
@@ -831,16 +851,25 @@ class InptConsolidationModule(nn.Module):
 
     def forward(self, x):
         """
+        Either performs an attention operation over embeddings (if
+        soft_attn is true), or selects embeddings, or selects embeddings
+        and combines them (if NUMERAL).
+
         Args:
-            x: torch LongTensor (B, S)
-                a sequence of indices
+            x: torch LongTensor (B, S) or torch FloatTensor (B,S,L)
+                a sequence of indices or softmax values over language
+                embeddings.
         Returns:
             fx: torch tensor (B, H)
         """
-        x = x.clone()
-        x[x<0] = self.null_idx
-
-        embs = self.embeddings(x)
+        if self.soft_attn and x.dtype == torch.FloatTensor().dtype:
+            if self.use_count_words == NUMERAL: raise NotImplemented
+            # Attention over embeddings
+            embs = torch.matmul(x, self.embeddings.weight)
+        else:
+            x = x.clone()
+            x[x<0] = self.null_idx
+            embs = self.embeddings(x)
         embs = self.dropout(embs)
         if self.use_count_words == NUMERAL:
             if self.rev_num:
@@ -1383,6 +1412,7 @@ class VaryLSTM(Model):
                 "drop_p": self.lang_inpt_drop_p,
                 "use_count_words": self.use_count_words,
                 "rev_num": self.rev_num,
+                "soft_attn": self.soft_attn,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -1417,16 +1447,22 @@ class VaryLSTM(Model):
         Args:
             langs: list of torch FloatTensors [(B,L), (B,L), ...]
         Returns:
-            lang: torch LongTensor (B,M)
+            lang: torch LongTensor (B,M) or FloatTensor (B, L)
                 the average over the langs list then the argmax over L
-                or L//max_char_seq if using NUMERAL variants
+                or L//max_char_seq if using NUMERAL variants. Will
+                return softmax over L dimension if using soft_attn
         """
         lang = langs[0].detach().data/len(langs)
         for i in range(1,len(langs)):
             lang = lang + langs[i].detach().data/len(langs)
-        lang = torch.argmax(
-            lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
-        ).long()
+        if self.soft_attn:
+            lang = torch.softmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            )
+        else:
+            lang = torch.argmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            ).long()
         return lang
 
     def reset(self, batch_size=1):
