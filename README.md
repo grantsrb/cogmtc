@@ -372,6 +372,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "grid_size": list of ints (height, width)
         the number of units (height, width) of the game. Only applies
         to gordongames variants
+    "min_play_area": bool
+        if true, minimizes the play area (area above the
+        dividing line of the grid) to 4 rows. Otherwise,
+        dividing line is placed at approximately the middle
+        row of the grid.
     "rand_pdb": bool
         if true, the player, dispenser, and ending button are randomly
         placed along the top row of the grid at the beginning of each
