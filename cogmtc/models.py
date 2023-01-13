@@ -849,7 +849,7 @@ class InptConsolidationModule(nn.Module):
                 x[rows] = torch.index_select(temp, dim=-1, index=fwd)
         return x.reshape(og_shape)
 
-    def forward(self, x):
+    def forward(self, x, avg_embs=False):
         """
         Either performs an attention operation over embeddings (if
         soft_attn is true), or selects embeddings, or selects embeddings
@@ -859,10 +859,17 @@ class InptConsolidationModule(nn.Module):
             x: torch LongTensor (B, S) or torch FloatTensor (B,S,L)
                 a sequence of indices or softmax values over language
                 embeddings.
+            avg_embs: bool
+                if true, will take the average of all embeddings rather
+                than the embeddings themselves. This is used as a
+                comparison to English speakers without language.
         Returns:
             fx: torch tensor (B, H)
         """
-        if self.soft_attn and x.dtype == torch.FloatTensor().dtype:
+        if avg_embs and len(x.shape)==2:
+            b,s = x.shape
+            embs = self.embeddings.weight.mean(0)[None].repeat((b,1))
+        elif self.soft_attn and x.dtype == torch.FloatTensor().dtype:
             if self.use_count_words == NUMERAL: raise NotImplemented
             # Attention over embeddings
             embs = torch.matmul(x, self.embeddings.weight)
@@ -1911,6 +1918,7 @@ class SeparateLSTM(LSTMOffshoot):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      avg_lang=False,
                                                       *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -1933,6 +1941,9 @@ class SeparateLSTM(LSTMOffshoot):
                 if true, blanks out the language before inputting
                 into the model. only applies if incl_lang_inpt is
                 true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -1971,7 +1982,7 @@ class SeparateLSTM(LSTMOffshoot):
             lang_inpt = self.process_lang_preds([lang])
         else:
             lang_inpt = lang_inpt[mask]
-        lang_inpt = self.lang_consolidator( lang_inpt )
+        lang_inpt = self.lang_consolidator( lang_inpt,avg_embs=avg_lang )
         if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
@@ -2066,6 +2077,7 @@ class NSepLSTM(SeparateLSTM):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      avg_lang=False,
                                                       *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2088,6 +2100,10 @@ class NSepLSTM(SeparateLSTM):
                 if true, blanks out the language before inputting
                 into the model. only applies if incl_lang_inpt is
                 true
+            avg_lang: bool
+                if true, uses the average of the language embeddings
+                as the input to the policy. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -2130,7 +2146,7 @@ class NSepLSTM(SeparateLSTM):
             lang_inpt = self.process_lang_preds([lang])
         else:
             lang_inpt = lang_inpt[mask]
-        lang_inpt = self.lang_consolidator( lang_inpt )
+        lang_inpt = self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
         if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
@@ -2317,6 +2333,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             avg_lang=False,
                                             *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2333,6 +2350,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
             blank_lang: bool
                 if true, zeros out the lang inputs. only applies if
                 incl_lang_inpt is true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
@@ -2379,9 +2399,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 langs = [*langs, *temp]
 
             lang_inpt = lang if lang_inpt is None else lang_inpt
-            lang_inpt = self.lang_consolidator(lang_inpt)
-            if blank_lang:
-                lang_inpt = torch.zeros_like(lang_inpt)
+            lang_inpt=self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
+            if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
             if self.bottleneck:
                 inpt = [
                   torch.zeros_like(fx),torch.zeros_like(cdtnl),lang_inpt
@@ -2641,6 +2660,7 @@ class NVaryLSTM(DoubleVaryLSTM):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             avg_lang=False,
                                              *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2658,6 +2678,9 @@ class NVaryLSTM(DoubleVaryLSTM):
                 if true, zeros out the language before inputting
                 into the model. only applies if incl_lang_inpt is
                 true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)

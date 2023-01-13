@@ -1524,6 +1524,7 @@ class ValidationRunner(Runner):
                            n_eps=None,
                            render=False,
                            blank_lang=False,
+                           avg_lang=False,
                            teacher_force=False,
                            verbose=False):
         """
@@ -1546,8 +1547,11 @@ class ValidationRunner(Runner):
                 if true, renders the play. can also be specified
                 through hyps.
             blank_lang: bool
-                if true, blank language inputs are argued to the model's
-                step function.
+                if true, blank language inputs are used in the model's
+                policy. 
+            avg_lang: bool
+                if true, the average of the language embeddings is
+                used as the input to the model's policy.
             teacher_force: bool
                 if true, the model uses ground truth language inputs
         Returns:
@@ -1650,7 +1654,10 @@ class ValidationRunner(Runner):
                 cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
 
             actn_pred, lang_pred = model.step(
-                inpt, cdt, lang_inpt=lang_inpt, blank_lang=blank_lang
+                inpt, cdt,
+                lang_inpt=lang_inpt,
+                blank_lang=blank_lang,
+                avg_lang=avg_lang
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
