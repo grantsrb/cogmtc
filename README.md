@@ -140,6 +140,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         100% of the time for numbers 0,1,and 2. But for numbers 3 and
         greater, either label 2 or 3 is used for the count word with
         a probability matching the published values.
+
+        -1: no language labels
+        0: inequality labels
+        1: english labels
+        2: piraha labels
         3: random labels
         4: two equivalent labels exist for every label
         5: numeral system with argued base `numeral_base`
@@ -162,6 +167,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if true, the training will skip phase 0 and go straight to
         phase 1 or 2 (depending on the value of `second_phase`).
         Defaults to false.
+    "pre_rand": bool
+        if true, uses random labels for language pretrainings. Currently
+        only implemented for English count words. Only applies during
+        phase 0.
     "first_phase": int (0, 1 or 2)
         this determines if the model will be trained with language,
         actions, or both during the first phase of the training.
@@ -238,7 +247,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         only applies if incl_lang_inpt is true
     "bottleneck": bool
         if true, with the NSepLSTM and SeparateLSTM, the input to the
-        action lstm(s) is only the language prediction. If `actnlish`
+        action lstm(s) is only the language prediction (without the
+        visual latent vector). If `actnlish`
         is false, the game will always spawn the agent in the same
         position relative to the pile and ending button. Otherwise the
         game is unsolvable.

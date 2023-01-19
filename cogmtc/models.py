@@ -164,6 +164,7 @@ class Model(CoreModule):
         rev_num=False,
         splt_feats=False,
         soft_attn=False,
+        record_lang_stats=False,
         *args, **kwargs
     ):
         """
@@ -369,6 +370,11 @@ class Model(CoreModule):
                 applied over the embeddings (values). This creates a
                 single vector as input as the sum of all possible
                 embeddings.
+            record_lang_stats: bool
+                if true, will create a buffer variable that tracks
+                the moving mean and variance of the language embeddings
+                used as inputs into the policy network in models that
+                use incl_lang_inpt.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -436,6 +442,7 @@ class Model(CoreModule):
         self.rev_num = rev_num
         self.splt_feats = splt_feats
         self.soft_attn = soft_attn
+        self.record_lang_stats = record_lang_stats
 
     def initialize_conditional_variables(self):
         """
@@ -697,6 +704,8 @@ class InptConsolidationModule(nn.Module):
                        drop_p=0,
                        rev_num=False,
                        soft_attn=False,
+                       record_lang_stats=False,
+                       alpha=0.99,
                        *args,**kwargs):
         """
         Args:
@@ -728,6 +737,13 @@ class InptConsolidationModule(nn.Module):
                 is applied over the embeddings (values). This creates a
                 single vector as input as the sum of all possible
                 embeddings.
+            record_lang_stats: bool
+                if true, will create a buffer variable that tracks
+                the moving mean and variance of the language embeddings
+                used as inputs into the policy network in models that
+                use incl_lang_inpt.
+            alpha: float [0,1]
+                the moving average factor if record_lang_stats is true
         """
         super().__init__()
         self.lang_size = lang_size
@@ -740,8 +756,13 @@ class InptConsolidationModule(nn.Module):
         self.drop_p = drop_p
         self.rev_num = rev_num
         self.soft_attn = soft_attn
+        self.record_lang_stats = record_lang_stats
+        self.alpha = alpha
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
+        if self.record_lang_stats:
+            self.register_buffer("emb_mean", torch.zeros(1,self.h_size))
+            self.register_buffer("emb_std", torch.ones(1,self.h_size))
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
             self.lstm_consol = ContainedLSTM( self.h_size, self.h_size )
@@ -849,7 +870,7 @@ class InptConsolidationModule(nn.Module):
                 x[rows] = torch.index_select(temp, dim=-1, index=fwd)
         return x.reshape(og_shape)
 
-    def forward(self, x, avg_embs=False):
+    def forward(self, x, avg_embs=False, sample_embs=False):
         """
         Either performs an attention operation over embeddings (if
         soft_attn is true), or selects embeddings, or selects embeddings
@@ -863,20 +884,36 @@ class InptConsolidationModule(nn.Module):
                 if true, will take the average of all embeddings rather
                 than the embeddings themselves. This is used as a
                 comparison to English speakers without language.
+            sample_embs: bool
+                if true and self.record_lang_stats is true, will sample
+                embeddings from the recorded mean and std
         Returns:
             fx: torch tensor (B, H)
         """
         if avg_embs and len(x.shape)==2:
             b,s = x.shape
-            embs = self.embeddings.weight.mean(0)[None].repeat((b,1))
+            if self.record_lang_stats:
+                embs = self.emb_mean.repeat((b,1))
+            else:
+                embs = self.embeddings.weight.mean(0)[None].repeat((b,1))
         elif self.soft_attn and x.dtype == torch.FloatTensor().dtype:
             if self.use_count_words == NUMERAL: raise NotImplemented
             # Attention over embeddings
             embs = torch.matmul(x, self.embeddings.weight)
+            if self.record_lang_stats:
+                a = self.alpha
+                e = embs.reshape(1,embs.shape[-1])
+                self.emb_mean = a*self.emb_mean + (1-a)*e.mean(0)
+                self.emb_std = a*self.emb_std + (1-a)*e.std(0)
         else:
             x = x.clone()
             x[x<0] = self.null_idx
             embs = self.embeddings(x)
+            if self.record_lang_stats:
+                a = self.alpha
+                e = embs.reshape(1,embs.shape[-1])
+                self.emb_mean = a*self.emb_mean + (1-a)*e.mean(0)
+                self.emb_std = a*self.emb_std + (1-a)*e.std(0)
         embs = self.dropout(embs)
         if self.use_count_words == NUMERAL:
             if self.rev_num:
@@ -1420,6 +1457,7 @@ class VaryLSTM(Model):
                 "use_count_words": self.use_count_words,
                 "rev_num": self.rev_num,
                 "soft_attn": self.soft_attn,
+                "record_lang_stats": self.record_lang_stats,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs

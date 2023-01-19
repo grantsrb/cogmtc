@@ -232,8 +232,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
 
         Args:
             phase: int or None
-                the phase of the training. only necessary if blind_lang
-                is true
+                the phase of the training
         Returns:
             exp: dict of tensors
                 deep copies the shared experience
@@ -249,11 +248,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
             count_list = count_list[None].repeat((b,n))
             self.exp["n_items"][:] = count_list[:,:l]
 
+        ucw = self.hyps["use_count_words"]
+        pre_rand = try_key(self.hyps,"pre_rand",False)
+        if pre_rand and phase==0: ucw = RANDOM
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
             self.exp["n_targs"],
             max_targ=self.hyps["max_lang_targ"],
-            use_count_words=self.hyps["use_count_words"],
+            use_count_words=ucw,
             max_char_seq=self.hyps["max_char_seq"],
             base=self.hyps["numeral_base"],
             lang_offset=self.hyps["lang_offset"],
@@ -1228,11 +1230,14 @@ class ValidationRunner(Runner):
                 acc = (data["n_items"][idx] == n_targs).float().mean()
                 avg_acc += acc.item()
 
+                ucw = self.hyps["use_count_words"]
+                pre_rand = try_key(self.hyps,"pre_rand",False)
+                if pre_rand and self.phase==0: ucw = RANDOM
                 lang_labels = get_lang_labels(
                     data["n_items"],
                     data["n_targs"],
                     max_targ=self.hyps["max_lang_targ"],
-                    use_count_words=self.hyps["use_count_words"],
+                    use_count_words=ucw,
                     max_char_seq=self.hyps["max_char_seq"],
                     base=self.hyps["numeral_base"],
                     lang_offset=self.hyps["lang_offset"],
@@ -1711,11 +1716,14 @@ class ValidationRunner(Runner):
                          not info["is_animating"]) or not info["is_pop"]:
                     lang_targ = targ
                 else:
+                    ucw = self.hyps["use_count_words"]
+                    pre_rand = try_key(self.hyps,"pre_rand",False)
+                    if pre_rand and self.phase==0: ucw = RANDOM
                     lang_targ = get_lang_labels(
                         torch.LongTensor([info["n_items"]]),
                         torch.LongTensor([info["n_targs"]]),
                         max_targ=self.hyps["max_lang_targ"],
-                        use_count_words=self.hyps["use_count_words"],
+                        use_count_words=ucw,
                         base=self.hyps["numeral_base"],
                         max_char_seq=self.hyps["max_char_seq"],
                         lang_offset=self.hyps["lang_offset"],

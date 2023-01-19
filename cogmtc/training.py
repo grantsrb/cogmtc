@@ -3,7 +3,7 @@ import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
 from cogmtc.envs import NONVERBAL_TASK_NAMES
 from cogmtc.utils.save_io import load_checkpoint
-from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, ACTIONS
+from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, ACTIONS, ENGLISH
 from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
@@ -1108,4 +1108,13 @@ def hyps_error_catching(hyps):
         print("splt_feat does not exist, renaming to splt_feats")
     if hyps["model_type"]!="NSepLSTM" and try_key(hyps,"splt_feats",False):
         raise NotImplemented
+
+    if try_key(hyps, "pre_rand", False):
+        if hyps["use_count_words"] != ENGLISH: raise NotImplemented
+        hyps["skip_first_phase"] = False
+        hyps["first_phase"] = 0
+        s = "Conflicting hyperparameter setup. pre_rand and " +\
+            "skip_first_phase. Setting skip_first_phase to false,"+\
+            "Setting first_phase to 0"
+        print(s)
 

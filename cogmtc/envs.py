@@ -10,7 +10,7 @@ import torch.nn.functional as F
 try:
     import gordoncont
 except:
-    print("gordongames not installed!")
+    print("gordoncont not installed!")
 try:
     import gordongames
 except:
