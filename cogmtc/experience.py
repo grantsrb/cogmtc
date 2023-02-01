@@ -520,7 +520,7 @@ class DataCollector:
 
         self.hyps = hyps
 
-        # Handle data sizes differently if Transformer model type
+        # Handle data sizes differently if Transformer model types
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
             exp_len = self.hyps["exp_len"]
@@ -1319,8 +1319,8 @@ class ValidationRunner(Runner):
         lang_acc = lang_acc/denom
         print("Unique preds", unique_preds)
         print("Unique labels:", unique_targs)
-        print("Total Val Actn:", avg_acc)
-        print("Total Val Lang:", lang_acc)
+        print("Val Trial Acc:", avg_acc)
+        print("Val Lang Acc:", lang_acc)
         if self.val_q is not None:
             if not self.val_q.empty():
                 _ = self.val_q.get()
@@ -1497,9 +1497,9 @@ class ValidationRunner(Runner):
             s = ""
             for k in accs:
                 if "_actn_acc" == k:
-                    s += int(len(s)>0)*" | " + "Actn Acc:" + str(accs[k])
+                    s += int(len(s)>0)*" | " + "Step Actn Acc:" + str(accs[k])
                 elif "_lang_acc" == k:
-                    s += int(len(s)>0)*" | " + "Lang Acc:" + str(accs[k])
+                    s += int(len(s)>0)*" | " + "Step Lang Acc:" + str(accs[k])
             print(s + "\n")
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}
@@ -1730,7 +1730,7 @@ class ValidationRunner(Runner):
                         null_label=self.hyps["null_label"],
                         stop_label=self.hyps["STOP"]
                     ).item()
-                print( "Lang (pred, targ):",
+                print("Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--", lang_targ)
                 print("Actn (pred, targ)",
