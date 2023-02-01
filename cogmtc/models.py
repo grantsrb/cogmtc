@@ -2902,6 +2902,11 @@ class Transformer(Model):
         self.shapes = self.cnn.shapes
         self.features = self.cnn.features
 
+        # The consolidators are either the identity function or they
+        # are a class that assists with processing the language
+        # for the next timestep
+        self.lang_consolidator = identity
+
         # Linear Projection
         self.flat_size = self.cnn.flat_size
         self.proj = nn.Sequential(
