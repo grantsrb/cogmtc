@@ -238,6 +238,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs.
         only applies if incl_lang_inpt is true
+    "shuffle_teacher_lang": bool
+        if true, will shuffle the teacher forced lang intputs during
+        training. Does not do so during validation.
     "teacher_force_val": bool
         if true, the correct language inputs are fed into the model
         during validation. Only implemented for ENGLISH language, no
@@ -277,10 +280,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "lnorm": bool
         determines if the model should use layernorm. true means it
         does use layernorm on both the h and c recurrent vectors just
-        after the lstm cell. Not that using the layernorm after the
+        after the lstm cell. This is overriden in cases where `c_lnorm`
+        is false. Note that using the layernorm after the
         cell still results in a normalized input for the next step
         in time while normalizing the input for the action and language
         networks.
+    "c_lnorm": bool
+        determines whether or not lnorm should be performed on the
+        c vector. You probably want this to be false.
     "fc_lnorm": bool
         if true, the model uses a layernorm before each Linear layer
         in the fully connected layers
@@ -490,6 +497,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         optional argument, if argued, determines the maximum number of
         steps that an episode can take. Be careful to make completion
         of an episode possible within the argued number of steps!
+    "randomize_order": bool
+        if true, the training will randomize the order of the sequence
+        chunks. This means that the elements of the sequence will not
+        be randomized, but the order of the sequences will. If false,
+        the sequences maintain the order they were collected in. If
+        your model is stateful (i.e. recurrent), you probably want this
+        to be false. Otherwise, true is probably good (for non-recurrent
+        transformer types).
 
     "n_heads": int
         the number of transformer attention heads
@@ -504,6 +519,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         `seq_len`. This will make the context window larger without
         backpropping through the increased number of tokens.
 
+    "n_inner_loops": 1
+        the number of times to train on one collected iteration of data.
+        this effectively repeats each epoch n times. Makes most sense
+        to use when shuffling data order.
     "reset_trn_env": bool
         if true, the training environments are reset at the beginning
         of each collection. This ensures that the model never has to
@@ -565,3 +584,19 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the name of the metric to use for determining the best
         performing model. i.e. "val_perc_correct_avg"
 
+## Notes on Tranformer Model Type Trainings
+In general you will want the following hyperparameter settings:
+
+    "randomize_order": true,
+    "roll_data": false,
+    "exp_len": 5000, # just use a longer exp_len here than for LSTMs
+    "seq_len": 96, # Use a longer seq_len here than for LSTMs
+    "rand_seq_len": false,
+
+Some of the above settings will automatically occur, but it is best
+to be explicit where you can.
+
+## Note on Pre Navigation Trainings
+The easiest way to do a pre\_nav training is to first train on the
+navigation task and then to perform a standard training using the
+pre\_nav models as the starting checkpoint.
