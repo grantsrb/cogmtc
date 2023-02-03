@@ -110,6 +110,12 @@ class Model(CoreModule):
 
     All models that inherit from Model must implement a step function
     that takes a float tensor of dims (B, C, H, W)
+
+    Many models retain the h and c vectors of the most recent step
+    in 2 lists called hs and cs. If the model has a language LSTM, the
+    language lstm states are last in the list. Otherwise they progress
+    smaller indices earlier in the network, larger indices later in
+    the network.
     """
     def __init__(self,
         inpt_shape,
@@ -2071,6 +2077,9 @@ class NSepLSTM(SeparateLSTM):
     to select an embedding that is fed into the first LSTM in the policy
     network. No gradients are backpropagated into the language lstm from
     the policy network.
+
+    The hs and cs members are lists of hidden states in which the
+    language lstm states are last in the list.
     """
     def __init__(self, n_lstms=3, *args, **kwargs):
         """
