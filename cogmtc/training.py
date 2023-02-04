@@ -7,7 +7,7 @@ from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, AC
 from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import torch
@@ -384,15 +384,25 @@ class Trainer:
             elif try_key(checkpt["stats"],"phase",None) == self.phase:
                 self.optim.load_state_dict(checkpt["optim_dict"])
 
-        self.scheduler = ReduceLROnPlateau(
-            self.optim,
-            mode='min',
-            factor=try_key(self.hyps,"factor", 0.9),
-            patience=try_key(self.hyps, "patience", 10),
-            threshold=try_key(self.hyps, "threshold", 0.0001),
-            min_lr=try_key(self.hyps, "min_lr", 0),
-            verbose=self.verbose
-        )
+        s = "ReduceLROnPlateau"
+        if try_key(self.hyps, "lr_scheduler", s) == s:
+            self.scheduler = ReduceLROnPlateau(
+                self.optim,
+                mode='min',
+                factor=try_key(self.hyps,"factor", 0.9),
+                patience=try_key(self.hyps, "patience", 10),
+                threshold=try_key(self.hyps, "threshold", 0.0001),
+                min_lr=try_key(self.hyps, "min_lr", 0),
+                verbose=self.verbose
+            )
+        elif try_key(self.hyps, "lr_scheduler", s) == "CosineAnnealingLR":
+            self.scheduler = CosineAnnealingLR(
+                self.optim,
+                T_max=self.hyps["n_epochs"],
+                eta_min=try_key(self.hyps,"min_lr", 1e-7)
+            )
+        else:
+            raise NotImplemented
 
     def reset_model(self, model, batch_size):
         """
@@ -591,9 +601,13 @@ class Trainer:
                 )
                 if self.hyps["exp_name"] == "test" and i >= 2: break
             key = "train_lang_loss" if self.phase==0 else "train_actn_loss"
-            self.scheduler.step(
-                np.mean(self.recorder.metrics[key])
-            )
+            s = "ReduceLROnPlateau"
+            if try_key(self.hyps, "lr_scheduler", s) == s:
+                self.scheduler.step(
+                    np.mean(self.recorder.metrics[key])
+                )
+            else:
+                self.scheduler.step()
 
     def print_loop(self,
                    loop_count,
