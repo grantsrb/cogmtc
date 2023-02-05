@@ -236,8 +236,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         language predictions. Only relevant when using the
         DoubleVaryLSTM model type and `incl_lang_preds` is true.
     "lang_teacher_p": float [0,1]
-        the probability of using teacher forcing on the language inputs.
-        only applies if incl_lang_inpt is true
+        the probability of using teacher forcing on the language inputs
+        during training. only applies if incl_lang_inpt is true.
     "shuffle_teacher_lang": bool
         if true, will shuffle the teacher forced lang intputs during
         training. Does not do so during validation.
