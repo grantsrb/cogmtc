@@ -24,12 +24,29 @@ It is also possible to split the hyperranges into multiple tmux sessions on mult
 
 ## Setup
 After cloning the repo, install all necessary packages locally:
+
 ```sh
-python3.6 -m pip install --user -r requirements.txt
+python3 -m pip install --user -r requirements.txt
 ```
-Next you will to install this pip package. Run the following:
+
+We use submodules for the gordongames environments. You will need to
+initialize these doing the following.
+
 ```sh
-python3.6 -m pip install --user -e .
+cd gordongames
+git submodule init
+git submodule update
+```
+
+Next you will to install this pip package and the gordongames package.
+Run the following in both the gordongames directory and the top
+directory of this project. The following assumes you're still located
+in the gordongames directory from the previous chunk of commands:
+
+```sh
+python3 -m pip install --user -e .
+cd ..
+python3 -m pip install --user -e .
 ```
 
 ## Repo Usage
