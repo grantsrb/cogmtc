@@ -3,11 +3,11 @@ import cogmtc.models # SimpleCNN, SimpleLSTM
 from cogmtc.recorders import Recorder
 from cogmtc.envs import NONVERBAL_TASK_NAMES
 from cogmtc.utils.save_io import load_checkpoint
-from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, ACTIONS
+from cogmtc.utils.utils import try_key, get_loss_and_accs, BASELINE, NUMERAL, ACTIONS, ENGLISH
 from cogmtc.utils.training import get_resume_checkpt
 
 from torch.optim import Adam, RMSprop
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import torch
@@ -168,8 +168,19 @@ def make_model(hyps):
                 "lang_denses.0.5.weight",
                 "lang_denses.0.5.bias",
             ]
+            mskeys = set(model.state_dict().keys())
+            sym_diff = mskeys.symmetric_difference(set(sd.keys()))
+            if len(sym_diff)>0:
+                print("State Dict Symmetric Difference")
+                for k in sym_diff: 
+                    if k in mskeys:
+                        print("MODEL:", k, model.state_dict()[k].shape)
+                    else:
+                        print("CHECKPT:", k, sd[k].shape)
+
             for key in sync_keys:
-                sd[key] = model.state_dict()[key]
+                if key in model.state_dict():
+                    sd[key] = model.state_dict()[key]
             model.load_state_dict(sd)
     elif lang_checkpt is not None and lang_checkpt.strip()!="":
         print("Loading language model", lang_checkpt)
@@ -373,15 +384,25 @@ class Trainer:
             elif try_key(checkpt["stats"],"phase",None) == self.phase:
                 self.optim.load_state_dict(checkpt["optim_dict"])
 
-        self.scheduler = ReduceLROnPlateau(
-            self.optim,
-            mode='min',
-            factor=try_key(self.hyps,"factor", 0.9),
-            patience=try_key(self.hyps, "patience", 10),
-            threshold=try_key(self.hyps, "threshold", 0.0001),
-            min_lr=try_key(self.hyps, "min_lr", 0),
-            verbose=self.verbose
-        )
+        s = "ReduceLROnPlateau"
+        if try_key(self.hyps, "lr_scheduler", s) == s:
+            self.scheduler = ReduceLROnPlateau(
+                self.optim,
+                mode='min',
+                factor=try_key(self.hyps,"factor", 0.9),
+                patience=try_key(self.hyps, "patience", 10),
+                threshold=try_key(self.hyps, "threshold", 0.0001),
+                min_lr=try_key(self.hyps, "min_lr", 0),
+                verbose=self.verbose
+            )
+        elif try_key(self.hyps, "lr_scheduler", s) == "CosineAnnealingLR":
+            self.scheduler = CosineAnnealingLR(
+                self.optim,
+                T_max=self.hyps["n_epochs"],
+                eta_min=try_key(self.hyps,"min_lr", 1e-7)
+            )
+        else:
+            raise NotImplemented
 
     def reset_model(self, model, batch_size):
         """
@@ -415,172 +436,178 @@ class Trainer:
                 The iter must also implement the __len__ member so that
                 the data can be easily looped through.
         """
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
-        model.train()
-        model.reset(self.hyps['batch_size'])
-        for i,data in enumerate(data_iter):
-            iter_start = time.time()
-            self.optim.zero_grad()
-            obs =   data["obs"]
-            actns = data["actns"]
-            dones = data["dones"]
-            drops = data["drops"]
-            n_items = data["n_items"]
-            n_targs = data["n_targs"]
-            labels = data["lang_labels"]
-            tasks = data["tasks"]
-            masks = data["masks"]
+        n_loops = try_key(self.hyps, "n_inner_loops", 1)
+        for loop in range(n_loops):
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
+            model.train()
+            model.reset(self.hyps['batch_size'])
+            for i,data in enumerate(data_iter):
+                iter_start = time.time()
+                self.optim.zero_grad()
+                obs =   data["obs"]
+                actns = data["actns"]
+                dones = data["dones"]
+                drops = data["drops"]
+                n_items = data["n_items"]
+                n_targs = data["n_targs"]
+                labels = data["lang_labels"]
+                tasks = data["tasks"]
+                masks = data["masks"]
 
-            if self.phase == 0 and try_key(self.hyps,"blind_lang",False):
-                obs = torch.zeros_like(obs)
-                dones = torch.zeros_like(dones)
-                reps = self.hyps["lang_range"][1]*2
-                if i % reps == reps-1:
-                    dones[:,0] = 1
+                if self.phase == 0 and try_key(self.hyps,"blind_lang",False):
+                    obs = torch.zeros_like(obs)
+                    dones = torch.zeros_like(dones)
+                    reps = self.hyps["lang_range"][1]*2
+                    if i % reps == reps-1:
+                        dones[:,0] = 1
 
 
-            # Testing
-            #############
-            if epoch > -1 and self.hyps["exp_name"]=="test" and\
-                            try_key(self.hyps,"static_render",False):
-                grabs = data["grabs"]
-                #print("train grabs:")
-                #for row in range(len(drops)):
-                #    print(grabs[row].cpu().numpy())
-                #print("train n_targs:")
-                #for row in range(len(drops)):
-                #    print(n_targs[row].cpu().numpy())
-                #print("train n_items:")
-                #for row in range(len(drops)):
-                #    print(n_items[row].cpu().numpy())
-                #print("train drops:")
-                #for row in range(len(drops)):
-                #    print(drops[row].cpu().numpy())
-                #print("lang labels:")
-                #for row in range(len(drops)):
-                #    print(labels[row].cpu().numpy())
-                #print("train actns:")
-                #for row in range(len(drops)):
-                #    print(actns[row].cpu().numpy())
+                # Testing
+                #############
+                if epoch > -1 and self.hyps["exp_name"]=="test" and\
+                                try_key(self.hyps,"static_render",False):
+                    grabs = data["grabs"]
+                    #print("train grabs:")
+                    #for row in range(len(drops)):
+                    #    print(grabs[row].cpu().numpy())
+                    #print("train n_targs:")
+                    #for row in range(len(drops)):
+                    #    print(n_targs[row].cpu().numpy())
+                    #print("train n_items:")
+                    #for row in range(len(drops)):
+                    #    print(n_items[row].cpu().numpy())
+                    #print("train drops:")
+                    #for row in range(len(drops)):
+                    #    print(drops[row].cpu().numpy())
+                    #print("lang labels:")
+                    #for row in range(len(drops)):
+                    #    print(labels[row].cpu().numpy())
+                    #print("train actns:")
+                    #for row in range(len(drops)):
+                    #    print(actns[row].cpu().numpy())
 
-                print("Starting new loop")
-                #o = obs.detach().cpu().data.numpy()
-                #o = o[:,:, 0].transpose((0,2,1,3)).reshape(-1, o.shape[2]*o.shape[1])
-                #fig = plt.figure(figsize=(10,10))
-                #plt.imshow(o)
-                #plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
-                ##plt.show()
-                for row in range(min(len(obs),5)):
-                    print("row:",row)
-                    for ii,o in enumerate(obs[row].detach().cpu().numpy()):
-                        print("seq:", ii)
-                        print("n_items:", n_items[row,ii].cpu().numpy())
-                        print("n_targs:", n_targs[row,ii].cpu().numpy())
-                        print("drops:", drops[row,ii].cpu().numpy())
-                        print("labels:", labels[row,ii].cpu().numpy())
-                        print("actns:", actns[row,ii].cpu().numpy())
-                        print("isanim:", data["is_animating"][row,ii].cpu().numpy())
-                        print("masks:", masks[row,ii].cpu().numpy())
-                        print("tasks:", tasks[row,ii].cpu().numpy())
-                        print()
-                        time.sleep(1)
-                        #plt.imshow(o.transpose((1,2,0)).squeeze())
-                        #plt.show()
-                ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
-            ###############
+                    print("Starting new loop")
+                    #o = obs.detach().cpu().data.numpy()
+                    #o = o[:,:, 0].transpose((0,2,1,3)).reshape(-1, o.shape[2]*o.shape[1])
+                    #fig = plt.figure(figsize=(10,10))
+                    #plt.imshow(o)
+                    #plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
+                    ##plt.show()
+                    for row in range(min(len(obs),5)):
+                        print("row:",row)
+                        for ii,o in enumerate(obs[row].detach().cpu().numpy()):
+                            print("seq:", ii)
+                            print("n_items:", n_items[row,ii].cpu().numpy())
+                            print("n_targs:", n_targs[row,ii].cpu().numpy())
+                            print("drops:", drops[row,ii].cpu().numpy())
+                            print("labels:", labels[row,ii].cpu().numpy())
+                            print("actns:", actns[row,ii].cpu().numpy())
+                            print("isanim:", data["is_animating"][row,ii].cpu().numpy())
+                            print("masks:", masks[row,ii].cpu().numpy())
+                            print("tasks:", tasks[row,ii].cpu().numpy())
+                            print()
+                            time.sleep(1)
+                            #plt.imshow(o.transpose((1,2,0)).squeeze())
+                            #plt.show()
+                    ##        #plt.savefig("imgs/epoch{}_row{}_samp{}.png".format(epoch, row, ii))
+                ###############
 
-            # Resets to h value to appropriate step of last loop
-            self.reset_model(model, len(obs))
+                # Resets to h value to appropriate step of last loop
+                self.reset_model(model, len(obs))
 
-            # If no drops exist during phase 0, no point in carrying out
-            # the backprop loop
-            if (drops.sum() == 0 and self.phase != 1) \
-                                or masks.float().sum() == len(masks):
-                print("No drops in loop", i, "... continuing")
-                with torch.no_grad():
-                    logits, langs = model(
-                        obs.to(DEVICE),
-                        dones=dones.to(DEVICE),
-                        tasks=tasks.to(DEVICE),
-                        masks=masks.to(DEVICE)
-                    )
-                continue
+                # If no drops exist during phase 0, no point in carrying out
+                # the backprop loop
+                if (drops.sum() == 0 and self.phase != 1) \
+                                    or masks.float().sum() == len(masks):
+                    print("No drops in loop", i, "... continuing")
+                    with torch.no_grad():
+                        logits, langs = model(
+                            obs.to(DEVICE),
+                            dones=dones.to(DEVICE),
+                            tasks=tasks.to(DEVICE),
+                            masks=masks.to(DEVICE)
+                        )
+                    continue
 
-            inps = None
-            if try_key(self.hyps, "incl_lang_inpt", False):
-                # No teacher forcing by probability p
-                p = try_key(self.hyps, "lang_teacher_p", 0)
-                if np.random.random() < p:
-                    inps = labels.long()
-                    if try_key(self.hyps,"shuffle_lang_inpts",False):
-                        s = inps.shape
-                        perm = torch.randperm(int(np.prod(s))).long()
-                        inps = inps.reshape(-1)[perm].reshape(s)
-                    inps = inps.to(DEVICE)
+                inps = None
+                if try_key(self.hyps, "incl_lang_inpt", False):
+                    # No teacher forcing by probability p
+                    p = try_key(self.hyps, "lang_teacher_p", 0)
+                    if np.random.random() < p:
+                        inps = labels.long()
+                        if try_key(self.hyps,"shuffle_teacher_lang",False):
+                            s = inps.shape
+                            perm = torch.randperm(int(np.prod(s))).long()
+                            inps = inps.reshape(-1)[perm].reshape(s)
+                        inps = inps.to(DEVICE)
 
-            # model uses dones if it is recurrent
-            logits, langs = model(
-                obs.to(DEVICE),
-                dones=dones.to(DEVICE),
-                tasks=tasks.to(DEVICE),
-                n_targs=n_targs.to(DEVICE),
-                masks=masks.to(DEVICE),
-                lang_inpts=inps
-            )
-
-            loss, losses, accs = get_loss_and_accs(
-                phase=self.phase,
-                loss_fxn=self.loss_fxn,
-                actn_preds=logits,
-                lang_preds=langs,
-                actn_targs=actns,
-                lang_targs=labels,
-                masks=masks,
-                drops=drops,
-                n_targs=n_targs,
-                n_items=n_items,
-                prepender="train",
-                lang_p=self.hyps["lang_p"],
-                # this only matters if using NUMERAL system
-                lang_size=self.hyps["lang_size"],
-                # this only matters if using NUMERAL system
-                use_count_words=self.hyps["use_count_words"],
-                null_alpha=try_key(self.hyps, "null_alpha", 0.1)
-            )
-            # Backprop and update
-            loss.backward()
-            if try_key(self.hyps, "grad_norm", 0) > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    self.hyps["grad_norm"]
+                # model uses dones if it is recurrent
+                logits, langs = model(
+                    obs.to(DEVICE),
+                    dones=dones.to(DEVICE),
+                    tasks=tasks.to(DEVICE),
+                    n_targs=n_targs.to(DEVICE),
+                    masks=masks.to(DEVICE),
+                    lang_inpts=inps
                 )
-            if try_key(self.hyps, "drop_grad", 0) > 0:
-                drop_p = self.hyps["drop_grad"]
-                for p in model.parameters():
-                    if hasattr(p.grad, "data"):
-                        drop_mask = torch.rand_like(p.grad.data)<drop_p
-                        p.grad.data[drop_mask] = 0
-            self.optim.step()
-            # Calc acc
-            # Record metrics
-            metrics = {
-                "train_loss": loss.item(),
-                **losses,
-                **accs}
-            self.recorder.track_loop(metrics)
-            key = "train_lang_acc" if self.phase==0 else "train_actn_acc"
-            self.print_loop(
-                i,
-                len(data_iter),
-                loss.item(),
-                try_key(accs,key,try_key(losses,"train_actn_loss",None)),
-                iter_start
-            )
-            if self.hyps["exp_name"] == "test" and i >= 2: break
-        key = "train_lang_loss" if self.phase==0 else "train_actn_loss"
-        self.scheduler.step(
-            np.mean(self.recorder.metrics[key])
-        )
+
+                loss, losses, accs = get_loss_and_accs(
+                    phase=self.phase,
+                    loss_fxn=self.loss_fxn,
+                    actn_preds=logits,
+                    lang_preds=langs,
+                    actn_targs=actns,
+                    lang_targs=labels,
+                    masks=masks,
+                    drops=drops,
+                    n_targs=n_targs,
+                    n_items=n_items,
+                    prepender="train",
+                    lang_p=self.hyps["lang_p"],
+                    # this only matters if using NUMERAL system
+                    lang_size=self.hyps["lang_size"],
+                    # this only matters if using NUMERAL system
+                    use_count_words=self.hyps["use_count_words"],
+                    null_alpha=try_key(self.hyps, "null_alpha", 0.1)
+                )
+                # Backprop and update
+                loss.backward()
+                if try_key(self.hyps, "grad_norm", 0) > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(),
+                        self.hyps["grad_norm"]
+                    )
+                if try_key(self.hyps, "drop_grad", 0) > 0:
+                    drop_p = self.hyps["drop_grad"]
+                    for p in model.parameters():
+                        if hasattr(p.grad, "data"):
+                            drop_mask = torch.rand_like(p.grad.data)<drop_p
+                            p.grad.data[drop_mask] = 0
+                self.optim.step()
+                # Calc acc
+                # Record metrics
+                metrics = {
+                    "train_loss": loss.item(),
+                    **losses,
+                    **accs}
+                self.recorder.track_loop(metrics)
+                key = "train_lang_acc" if self.phase==0 else "train_actn_acc"
+                self.print_loop(
+                    i,
+                    len(data_iter),
+                    loss.item(),
+                    try_key(accs,key,try_key(losses,"train_actn_loss",None)),
+                    iter_start
+                )
+                if self.hyps["exp_name"] == "test" and i >= 2: break
+            key = "train_lang_loss" if self.phase==0 else "train_actn_loss"
+            s = "ReduceLROnPlateau"
+            if try_key(self.hyps, "lr_scheduler", s) == s:
+                self.scheduler.step(
+                    np.mean(self.recorder.metrics[key])
+                )
+            else:
+                self.scheduler.step()
 
     def print_loop(self,
                    loop_count,
@@ -1016,6 +1043,10 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
+    # If model is of Transformer (TRANSFORMER) type, this is denoted
+    # in the model architecture which we do not have at this point.
+    # Thus, many hyperparameters are changed in the `experience.py`
+    # module to protect against failed hyperparameter combinations.
     if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM"}:
         hyps["incl_lang_inpt"] = True
         hyps["n_lstms"] = max(2,try_key(hyps,"n_lstms",2))
@@ -1033,6 +1064,7 @@ def hyps_error_catching(hyps):
             hyps["model_type"] = "NVaryLSTM"
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
+        hyps["splt_feats"] = False
         hyps["skip_first_phase"] = True
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
@@ -1096,4 +1128,13 @@ def hyps_error_catching(hyps):
         print("splt_feat does not exist, renaming to splt_feats")
     if hyps["model_type"]!="NSepLSTM" and try_key(hyps,"splt_feats",False):
         raise NotImplemented
+
+    if try_key(hyps, "pre_rand", False):
+        if hyps["use_count_words"] != ENGLISH: raise NotImplemented
+        hyps["skip_first_phase"] = False
+        hyps["first_phase"] = 0
+        s = "Conflicting hyperparameter setup. pre_rand and " +\
+            "skip_first_phase. Setting skip_first_phase to false,"+\
+            "Setting first_phase to 0"
+        print(s)
 

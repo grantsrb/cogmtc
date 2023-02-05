@@ -1,0 +1,3 @@
+[submodule "gordongames"]
+	path = gordongames
+	url = git@github.com:grantsrb/gordongames.git

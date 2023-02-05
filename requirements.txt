@@ -7,4 +7,3 @@ scikit-image
 opencv-python
 pandas
 gym
--e git+git://github.com/grantsrb/gordongames.git@master#egg=gordongames

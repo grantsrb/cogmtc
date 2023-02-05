@@ -232,8 +232,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
 
         Args:
             phase: int or None
-                the phase of the training. only necessary if blind_lang
-                is true
+                the phase of the training
         Returns:
             exp: dict of tensors
                 deep copies the shared experience
@@ -249,11 +248,14 @@ class ExperienceReplay(torch.utils.data.Dataset):
             count_list = count_list[None].repeat((b,n))
             self.exp["n_items"][:] = count_list[:,:l]
 
+        ucw = self.hyps["use_count_words"]
+        pre_rand = try_key(self.hyps,"pre_rand",False)
+        if pre_rand and phase==0: ucw = RANDOM
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
             self.exp["n_targs"],
             max_targ=self.hyps["max_lang_targ"],
-            use_count_words=self.hyps["use_count_words"],
+            use_count_words=ucw,
             max_char_seq=self.hyps["max_char_seq"],
             base=self.hyps["numeral_base"],
             lang_offset=self.hyps["lang_offset"],
@@ -518,7 +520,7 @@ class DataCollector:
 
         self.hyps = hyps
 
-        # Handle data sizes differently if Transformer model type
+        # Handle data sizes differently if Transformer model types
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
             exp_len = self.hyps["exp_len"]
@@ -1228,11 +1230,14 @@ class ValidationRunner(Runner):
                 acc = (data["n_items"][idx] == n_targs).float().mean()
                 avg_acc += acc.item()
 
+                ucw = self.hyps["use_count_words"]
+                pre_rand = try_key(self.hyps,"pre_rand",False)
+                if pre_rand and self.phase==0: ucw = RANDOM
                 lang_labels = get_lang_labels(
                     data["n_items"],
                     data["n_targs"],
                     max_targ=self.hyps["max_lang_targ"],
-                    use_count_words=self.hyps["use_count_words"],
+                    use_count_words=ucw,
                     max_char_seq=self.hyps["max_char_seq"],
                     base=self.hyps["numeral_base"],
                     lang_offset=self.hyps["lang_offset"],
@@ -1314,8 +1319,8 @@ class ValidationRunner(Runner):
         lang_acc = lang_acc/denom
         print("Unique preds", unique_preds)
         print("Unique labels:", unique_targs)
-        print("Total Val Actn:", avg_acc)
-        print("Total Val Lang:", lang_acc)
+        print("Val Trial Acc:", avg_acc)
+        print("Val Lang Acc:", lang_acc)
         if self.val_q is not None:
             if not self.val_q.empty():
                 _ = self.val_q.get()
@@ -1492,9 +1497,9 @@ class ValidationRunner(Runner):
             s = ""
             for k in accs:
                 if "_actn_acc" == k:
-                    s += int(len(s)>0)*" | " + "Actn Acc:" + str(accs[k])
+                    s += int(len(s)>0)*" | " + "Step Actn Acc:" + str(accs[k])
                 elif "_lang_acc" == k:
-                    s += int(len(s)>0)*" | " + "Lang Acc:" + str(accs[k])
+                    s += int(len(s)>0)*" | " + "Step Lang Acc:" + str(accs[k])
             print(s + "\n")
         losses = {k:[v] for k,v in losses.items()}
         accs = {k:[v] for k,v in accs.items()}
@@ -1524,6 +1529,7 @@ class ValidationRunner(Runner):
                            n_eps=None,
                            render=False,
                            blank_lang=False,
+                           avg_lang=False,
                            teacher_force=False,
                            verbose=False):
         """
@@ -1546,8 +1552,11 @@ class ValidationRunner(Runner):
                 if true, renders the play. can also be specified
                 through hyps.
             blank_lang: bool
-                if true, blank language inputs are argued to the model's
-                step function.
+                if true, blank language inputs are used in the model's
+                policy. 
+            avg_lang: bool
+                if true, the average of the language embeddings is
+                used as the input to the model's policy.
             teacher_force: bool
                 if true, the model uses ground truth language inputs
         Returns:
@@ -1650,7 +1659,10 @@ class ValidationRunner(Runner):
                 cdt = cdtnl + model.cdtnl_lstm.embs.weight[idx]
 
             actn_pred, lang_pred = model.step(
-                inpt, cdt, lang_inpt=lang_inpt, blank_lang=blank_lang
+                inpt, cdt,
+                lang_inpt=lang_inpt,
+                blank_lang=blank_lang,
+                avg_lang=avg_lang
             )
             data["actn_preds"].append(actn_pred)
             if incl_hs: self.record_hs(model=model,data=data)
@@ -1704,18 +1716,21 @@ class ValidationRunner(Runner):
                          not info["is_animating"]) or not info["is_pop"]:
                     lang_targ = targ
                 else:
+                    ucw = self.hyps["use_count_words"]
+                    pre_rand = try_key(self.hyps,"pre_rand",False)
+                    if pre_rand and self.phase==0: ucw = RANDOM
                     lang_targ = get_lang_labels(
                         torch.LongTensor([info["n_items"]]),
                         torch.LongTensor([info["n_targs"]]),
                         max_targ=self.hyps["max_lang_targ"],
-                        use_count_words=self.hyps["use_count_words"],
+                        use_count_words=ucw,
                         base=self.hyps["numeral_base"],
                         max_char_seq=self.hyps["max_char_seq"],
                         lang_offset=self.hyps["lang_offset"],
                         null_label=self.hyps["null_label"],
                         stop_label=self.hyps["STOP"]
                     ).item()
-                print( "Lang (pred, targ):",
+                print("Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--", lang_targ)
                 print("Actn (pred, targ)",

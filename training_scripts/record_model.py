@@ -17,12 +17,15 @@ $ python3 record_model.py exp_name/model_folder/
 
 n_episodes = 1 # Set this to longer to get more unique game xp
 repeat = 4 # Set this to longer to linger on images longer
-fps = 2
-targ_range = [1,10] # max not inclusive
+fps = 1
+targ_range = [2,5] # max not inclusive
+
+assert targ_range[0] < targ_range[1], "max is not inclusive"
 
 if __name__ == "__main__":
     if not os.path.exists("./vids/"): os.mkdir("vids/")
     if not os.path.exists("./imgs/"): os.mkdir("imgs/")
+    os.system("rm -rf ./imgs/*")
     model_folder = sys.argv[1]
     checkpt = cogmtc.utils.save_io.load_checkpoint(
         model_folder,

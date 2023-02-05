@@ -163,6 +163,8 @@ class Model(CoreModule):
         targ_range=(1,17),
         rev_num=False,
         splt_feats=False,
+        soft_attn=False,
+        record_lang_stats=False,
         *args, **kwargs
     ):
         """
@@ -361,6 +363,18 @@ class Model(CoreModule):
                 for the language pathway in the NSepLSTM variants.
                 This ensures that the language and policy pathways do
                 not overlap at all.
+            soft_attn: bool
+                if true, language inputs in sep models will be an
+                attentional sum over the embeddings. Concretely, 
+                the softmax outputs will act as attention (qk) which is
+                applied over the embeddings (values). This creates a
+                single vector as input as the sum of all possible
+                embeddings.
+            record_lang_stats: bool
+                if true, will create a buffer variable that tracks
+                the moving mean and variance of the language embeddings
+                used as inputs into the policy network in models that
+                use incl_lang_inpt.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -427,6 +441,8 @@ class Model(CoreModule):
         self.legacy = legacy
         self.rev_num = rev_num
         self.splt_feats = splt_feats
+        self.soft_attn = soft_attn
+        self.record_lang_stats = record_lang_stats
 
     def initialize_conditional_variables(self):
         """
@@ -436,7 +452,8 @@ class Model(CoreModule):
         batch rows at the same time. At training time, we use 
         `repeat_interleave` to expand cdtnl_batch appropriately.
         """
-        if "gordongames-v11" in self.env_types:
+        if "gordongames-v11" in self.env_types or "gordongames-v12" in\
+                                                        self.env_types:
             lang_size = CDTNL_LANG_SIZE + self.max_train_targ
         else: lang_size = CDTNL_LANG_SIZE 
         self.cdtnl_lstm = ConditionalLSTM(
@@ -449,7 +466,7 @@ class Model(CoreModule):
             k = self.env2idx[env_type]
             l = len(TORCH_CONDITIONALS[env_type])
             cdtnl_idxs[k,:l] = TORCH_CONDITIONALS[env_type]
-            if "gordongames-v11" == env_type:
+            if "gordongames-v11"==env_type or"gordongames-v12"==env_type:
                 add_n2cdtnls.append(k)
         self.register_buffer("cdtnl_idxs", cdtnl_idxs)
         if len(add_n2cdtnls)>0:
@@ -687,6 +704,9 @@ class InptConsolidationModule(nn.Module):
                        null_idx=0,
                        drop_p=0,
                        rev_num=False,
+                       soft_attn=False,
+                       record_lang_stats=False,
+                       alpha=0.99,
                        *args,**kwargs):
         """
         Args:
@@ -709,6 +729,22 @@ class InptConsolidationModule(nn.Module):
                 if true, will reverse the order of numerals in the
                 last dimension up to the stop token when processing
                 the language inputs.
+            soft_attn: bool
+                if true, language inputs to LSTM will be an
+                attentional sum over the embeddings. In this module,
+                this means that instead of receiving token indices,
+                it will receive a softmax over the potential embeddings. 
+                This module will use the softmax as attention (qk) which
+                is applied over the embeddings (values). This creates a
+                single vector as input as the sum of all possible
+                embeddings.
+            record_lang_stats: bool
+                if true, will create a buffer variable that tracks
+                the moving mean and variance of the language embeddings
+                used as inputs into the policy network in models that
+                use incl_lang_inpt.
+            alpha: float [0,1]
+                the moving average factor if record_lang_stats is true
         """
         super().__init__()
         self.lang_size = lang_size
@@ -720,8 +756,14 @@ class InptConsolidationModule(nn.Module):
         self.null_idx = null_idx
         self.drop_p = drop_p
         self.rev_num = rev_num
+        self.soft_attn = soft_attn
+        self.record_lang_stats = record_lang_stats
+        self.alpha = alpha
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
+        if self.record_lang_stats:
+            self.register_buffer("emb_mean", torch.zeros(1,self.h_size))
+            self.register_buffer("emb_std", torch.ones(1,self.h_size))
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
             self.lstm_consol = ContainedLSTM( self.h_size, self.h_size )
@@ -829,18 +871,50 @@ class InptConsolidationModule(nn.Module):
                 x[rows] = torch.index_select(temp, dim=-1, index=fwd)
         return x.reshape(og_shape)
 
-    def forward(self, x):
+    def forward(self, x, avg_embs=False, sample_embs=False):
         """
+        Either performs an attention operation over embeddings (if
+        soft_attn is true), or selects embeddings, or selects embeddings
+        and combines them (if NUMERAL).
+
         Args:
-            x: torch LongTensor (B, S)
-                a sequence of indices
+            x: torch LongTensor (B, S) or torch FloatTensor (B,S,L)
+                a sequence of indices or softmax values over language
+                embeddings.
+            avg_embs: bool
+                if true, will take the average of all embeddings rather
+                than the embeddings themselves. This is used as a
+                comparison to English speakers without language.
+            sample_embs: bool
+                if true and self.record_lang_stats is true, will sample
+                embeddings from the recorded mean and std
         Returns:
             fx: torch tensor (B, H)
         """
-        x = x.clone()
-        x[x<0] = self.null_idx
-
-        embs = self.embeddings(x)
+        if avg_embs and len(x.shape)==2:
+            b,s = x.shape
+            if self.record_lang_stats:
+                embs = self.emb_mean.repeat((b,1))
+            else:
+                embs = self.embeddings.weight.mean(0)[None].repeat((b,1))
+        elif self.soft_attn and x.dtype == torch.FloatTensor().dtype:
+            if self.use_count_words == NUMERAL: raise NotImplemented
+            # Attention over embeddings
+            embs = torch.matmul(x, self.embeddings.weight)
+            if self.record_lang_stats:
+                a = self.alpha
+                e = embs.reshape(1,embs.shape[-1])
+                self.emb_mean = a*self.emb_mean + (1-a)*e.mean(0)
+                self.emb_std = a*self.emb_std + (1-a)*e.std(0)
+        else:
+            x = x.clone()
+            x[x<0] = self.null_idx
+            embs = self.embeddings(x)
+            if self.record_lang_stats:
+                a = self.alpha
+                e = embs.reshape(1,embs.shape[-1])
+                self.emb_mean = a*self.emb_mean + (1-a)*e.mean(0)
+                self.emb_std = a*self.emb_std + (1-a)*e.std(0)
         embs = self.dropout(embs)
         if self.use_count_words == NUMERAL:
             if self.rev_num:
@@ -1383,6 +1457,8 @@ class VaryLSTM(Model):
                 "drop_p": self.lang_inpt_drop_p,
                 "use_count_words": self.use_count_words,
                 "rev_num": self.rev_num,
+                "soft_attn": self.soft_attn,
+                "record_lang_stats": self.record_lang_stats,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -1417,16 +1493,22 @@ class VaryLSTM(Model):
         Args:
             langs: list of torch FloatTensors [(B,L), (B,L), ...]
         Returns:
-            lang: torch LongTensor (B,M)
+            lang: torch LongTensor (B,M) or FloatTensor (B, L)
                 the average over the langs list then the argmax over L
-                or L//max_char_seq if using NUMERAL variants
+                or L//max_char_seq if using NUMERAL variants. Will
+                return softmax over L dimension if using soft_attn
         """
         lang = langs[0].detach().data/len(langs)
         for i in range(1,len(langs)):
             lang = lang + langs[i].detach().data/len(langs)
-        lang = torch.argmax(
-            lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
-        ).long()
+        if self.soft_attn:
+            lang = torch.softmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            )
+        else:
+            lang = torch.argmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            ).long()
         return lang
 
     def reset(self, batch_size=1):
@@ -1772,8 +1854,9 @@ class LSTMOffshoot(VaryLSTM):
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
             n_targs: None or LongTensor (B,S)
-                only applies for gordongames-v11. this is a vector
-                indicating the number of target objects for the episode.
+                only applies for gordongames-v11 and v12. this is a
+                vector indicating the number of target objects for the
+                episode.
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
@@ -1875,6 +1958,7 @@ class SeparateLSTM(LSTMOffshoot):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      avg_lang=False,
                                                       *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -1894,8 +1978,12 @@ class SeparateLSTM(LSTMOffshoot):
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
             blank_lang: bool
-                if true, zeros out the lang inputs. only applies if
-                incl_lang_inpt is true
+                if true, blanks out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -1934,9 +2022,8 @@ class SeparateLSTM(LSTMOffshoot):
             lang_inpt = self.process_lang_preds([lang])
         else:
             lang_inpt = lang_inpt[mask]
-        lang_inpt = self.lang_consolidator( lang_inpt )
-        if blank_lang:
-            lang_inpt = torch.zeros_like(lang_inpt)
+        lang_inpt = self.lang_consolidator( lang_inpt,avg_embs=avg_lang )
+        if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -2030,6 +2117,7 @@ class NSepLSTM(SeparateLSTM):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
+                                                      avg_lang=False,
                                                       *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2049,8 +2137,13 @@ class NSepLSTM(SeparateLSTM):
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
             blank_lang: bool
-                if true, zeros out the language inputs. only applies
-                if incl_lang_inpt is true
+                if true, blanks out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
+            avg_lang: bool
+                if true, uses the average of the language embeddings
+                as the input to the policy. only applies if
+                incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor [ (B, L) ]
@@ -2093,9 +2186,8 @@ class NSepLSTM(SeparateLSTM):
             lang_inpt = self.process_lang_preds([lang])
         else:
             lang_inpt = lang_inpt[mask]
-        lang_inpt = self.lang_consolidator( lang_inpt )
-        if blank_lang:
-            lang_inpt = torch.zeros_like(lang_inpt)
+        lang_inpt = self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
+        if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
 
         if self.bottleneck:
             cat = lang_inpt
@@ -2281,6 +2373,7 @@ class DoubleVaryLSTM(LSTMOffshoot):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             avg_lang=False,
                                             *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2297,6 +2390,9 @@ class DoubleVaryLSTM(LSTMOffshoot):
             blank_lang: bool
                 if true, zeros out the lang inputs. only applies if
                 incl_lang_inpt is true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
@@ -2343,9 +2439,8 @@ class DoubleVaryLSTM(LSTMOffshoot):
                 langs = [*langs, *temp]
 
             lang_inpt = lang if lang_inpt is None else lang_inpt
-            lang_inpt = self.lang_consolidator(lang_inpt)
-            if blank_lang:
-                lang_inpt = torch.zeros_like(lang_inpt)
+            lang_inpt=self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
+            if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
             if self.bottleneck:
                 inpt = [
                   torch.zeros_like(fx),torch.zeros_like(cdtnl),lang_inpt
@@ -2605,6 +2700,7 @@ class NVaryLSTM(DoubleVaryLSTM):
         self.make_lang_denses()
 
     def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             avg_lang=False,
                                              *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
@@ -2619,8 +2715,12 @@ class NVaryLSTM(DoubleVaryLSTM):
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
             blank_lang: bool
-                if true, zeros out the lang inputs. only applies if
-                incl_lang_inpt is true
+                if true, zeros out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
+            avg_lang: bool
+                if true, uses the average of the embeddings as the
+                lang inpts. only applies if incl_lang_inpt is true
         Returns:
             actn: torch Float Tensor (B, K)
             langs: list of torch Float Tensor (B, L)
