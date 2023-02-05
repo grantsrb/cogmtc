@@ -458,7 +458,8 @@ class Model(CoreModule):
         batch rows at the same time. At training time, we use 
         `repeat_interleave` to expand cdtnl_batch appropriately.
         """
-        if "gordongames-v11" in self.env_types:
+        if "gordongames-v11" in self.env_types or "gordongames-v12" in\
+                                                        self.env_types:
             lang_size = CDTNL_LANG_SIZE + self.max_train_targ
         else: lang_size = CDTNL_LANG_SIZE 
         self.cdtnl_lstm = ConditionalLSTM(
@@ -471,7 +472,7 @@ class Model(CoreModule):
             k = self.env2idx[env_type]
             l = len(TORCH_CONDITIONALS[env_type])
             cdtnl_idxs[k,:l] = TORCH_CONDITIONALS[env_type]
-            if "gordongames-v11" == env_type:
+            if "gordongames-v11"==env_type or"gordongames-v12"==env_type:
                 add_n2cdtnls.append(k)
         self.register_buffer("cdtnl_idxs", cdtnl_idxs)
         if len(add_n2cdtnls)>0:
@@ -1859,8 +1860,9 @@ class LSTMOffshoot(VaryLSTM):
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
             n_targs: None or LongTensor (B,S)
-                only applies for gordongames-v11. this is a vector
-                indicating the number of target objects for the episode.
+                only applies for gordongames-v11 and v12. this is a
+                vector indicating the number of target objects for the
+                episode.
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
