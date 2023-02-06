@@ -523,6 +523,8 @@ class DataCollector:
         # Handle data sizes differently if Transformer model types
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
+            if mt==models.MODEL_TYPES.TRANSFORMER:
+                self.hyps["lang_teacher_p"] = 1
             exp_len = self.hyps["exp_len"]
             seq_len = self.hyps["seq_len"]
             bsize   = self.hyps["batch_size"]

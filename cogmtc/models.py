@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.nn import *
 from cogmtc.utils.torch_modules import *
-from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask, max_one_hot, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL
+from cogmtc.utils.utils import update_shape, get_transformer_fwd_mask, max_one_hot, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, BASELINE
 
 from cogmtc.envs import TORCH_CONDITIONALS, CDTNL_LANG_SIZE
 import matplotlib.pyplot as plt
@@ -130,6 +130,7 @@ class Model(CoreModule):
         n_heads=8,
         n_layers=3,
         n_vit_layers=3,
+        stack_context=True,
         n_outlayers=2,
         seq_len=64,
         output_fxn="NullOp",
@@ -165,6 +166,7 @@ class Model(CoreModule):
         splt_feats=False,
         soft_attn=False,
         record_lang_stats=False,
+        emb_ffn=True,
         *args, **kwargs
     ):
         """
@@ -218,6 +220,11 @@ class Model(CoreModule):
                 the number of transformer layers.
             n_vit_layers: int
                 the number of vision transformer layers.
+            stack_context: bool
+                if true, will take language embeddings and concatenate
+                them along the h dimension to the visual latent vectors.
+                only applies if incl_lang_inpt is true. Alternatively,
+                vision and language will be alternated in context.
             n_outlayers: int
                 the number of layers for the actn and language dense
                 network output modules if using the Vary variants of
@@ -375,6 +382,9 @@ class Model(CoreModule):
                 the moving mean and variance of the language embeddings
                 used as inputs into the policy network in models that
                 use incl_lang_inpt.
+            emb_ffn: bool
+                if true, the embedding is processed through a
+                feedforward network.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -402,6 +412,7 @@ class Model(CoreModule):
         self.n_heads = n_heads
         self.n_layers = n_layers
         self.n_vit_layers = n_vit_layers
+        self.stack_context = stack_context
         self.seq_len = seq_len
         self.max_char_seq = max_char_seq
         self.STOP = STOP
@@ -443,6 +454,7 @@ class Model(CoreModule):
         self.splt_feats = splt_feats
         self.soft_attn = soft_attn
         self.record_lang_stats = record_lang_stats
+        self.emb_ffn = emb_ffn
 
     def initialize_conditional_variables(self):
         """
@@ -707,6 +719,7 @@ class InptConsolidationModule(nn.Module):
                        soft_attn=False,
                        record_lang_stats=False,
                        alpha=0.99,
+                       emb_ffn=True,
                        *args,**kwargs):
         """
         Args:
@@ -745,6 +758,9 @@ class InptConsolidationModule(nn.Module):
                 use incl_lang_inpt.
             alpha: float [0,1]
                 the moving average factor if record_lang_stats is true
+            emb_ffn: bool
+                if true, the embedding is processed through a
+                feedforward network.
         """
         super().__init__()
         self.lang_size = lang_size
@@ -759,6 +775,7 @@ class InptConsolidationModule(nn.Module):
         self.soft_attn = soft_attn
         self.record_lang_stats = record_lang_stats
         self.alpha = alpha
+        self.emb_ffn = emb_ffn
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         if self.record_lang_stats:
@@ -921,11 +938,17 @@ class InptConsolidationModule(nn.Module):
                 x = InptConsolidationModule.reverse_numerals(x,self.STOP)
             mask = self.get_mask(x, self.STOP, incl_token=True)
             embs = self.lstm_consol(embs, mask)
-        if len(embs.shape)==2:
-            outputs = self.consolidator(embs)
-        elif embs.shape[1]==1:
-            outputs = self.consolidator(embs[:,0])
-        return self.proj(outputs)
+
+        # If embs shape is (B,1,E)
+        if len(embs.shape)!=2 and embs.shape[1]==1:
+            embs = embs[:,0]
+        if self.emb_ffn:
+            #I think we can remove this if statement, but I'm not certain
+            if len(embs.shape)==2:
+                embs = self.consolidator(embs)
+            return self.proj(embs)
+        return embs
+
 
 class NullModel(Model):
     def __init__(self, *args, **kwargs):
@@ -1459,6 +1482,7 @@ class VaryLSTM(Model):
                 "rev_num": self.rev_num,
                 "soft_attn": self.soft_attn,
                 "record_lang_stats": self.record_lang_stats,
+                "emb_ffn": self.emb_ffn,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -1853,6 +1877,10 @@ class LSTMOffshoot(VaryLSTM):
                 if not None and self.incl_lang_inpt is true, lang_inpts
                 are used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
+                Note, these are the correct labels for the timestep.
+                So, if you are predicting language, you will not want
+                to use the corresponding timestep from this sequence
+                as input to that prediction.
             n_targs: None or LongTensor (B,S)
                 only applies for gordongames-v11 and v12. this is a
                 vector indicating the number of target objects for the
@@ -2116,9 +2144,9 @@ class NSepLSTM(SeparateLSTM):
         self.make_actn_dense()
         self.make_lang_denses()
 
-    def step(self, x, cdtnl, mask=None,lang_inpt=None,blank_lang=False,
-                                                      avg_lang=False,
-                                                      *args,**kwargs):
+    def step(self,x,cdtnl,mask=None,lang_inpt=None,blank_lang=False,
+                                                   avg_lang=False,
+                                                   *args,**kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2906,9 +2934,29 @@ class Transformer(Model):
 
         # Linear Projection
         self.flat_size = self.cnn.flat_size
+        size = self.h_size
+        self.lang_consolidator = identity
+        if self.incl_lang_inpt:
+            if self.stack_context:
+                size = self.h_size//2
+            consolidator_kwargs = {
+                "lang_size": self.lang_size,
+                "h_size": size,
+                "max_char_seq": self.max_char_seq,
+                "STOP": self.STOP,
+                "drop_p": self.lang_inpt_drop_p,
+                "use_count_words": self.use_count_words,
+                "rev_num": self.rev_num,
+                "soft_attn": self.soft_attn,
+                "record_lang_stats": self.record_lang_stats,
+                "emb_ffn": self.emb_ffn,
+            }
+            self.lang_consolidator = InptConsolidationModule(
+                **consolidator_kwargs
+            )
         self.proj = nn.Sequential(
             Flatten(),
-            nn.Linear(self.flat_size, self.h_size)
+            nn.Linear(self.flat_size, size)
         )
 
         # Transformer
@@ -2917,10 +2965,10 @@ class Transformer(Model):
             self.feat_drop_p
         )
         enc_layer = nn.TransformerEncoderLayer(
-            self.h_size,
-            self.n_heads,
-            3*self.h_size,
-            self.feat_drop_p,
+            d_model=self.h_size,
+            nhead=self.n_heads,
+            dim_feedforward=self.h_mult*self.h_size,
+            dropout=self.feat_drop_p,
             norm_first=True,
             batch_first=True
         )
@@ -2990,7 +3038,8 @@ class Transformer(Model):
                 maxlen=self.seq_len
             )
 
-    def step(self, x, cdtnl, *args, **kwargs):
+    def step(self, x, cdtnl, lang_inpt=None, blank_lang=False,
+                                             *args, **kwargs):
         """
         Performs a single step rather than a complete sequence of steps
 
@@ -2998,13 +3047,40 @@ class Transformer(Model):
             x: torch FloatTensor (B, C, H, W)
             cdtnl: torch FloatTensor (B, E)
                 the conditional latent vectors
+            lang_inpt: None or torch LongTensor (B, M)
+                a sequence of language indicies that will be consolidated
+                and used as input to the lstm. for non NUMERAL models,
+                M will be equal to 1.
+            blank_lang: bool
+                if true, blanks out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
         Returns:
             actn: torch Float Tensor (B, K)
-            langs: list of torch Float Tensor (B, L)
+            langs: list of torch Float Tensor [ (B, L) ]
         """
         if len(self.prev_hs)==0: self.prev_hs.append(cdtnl)
         fx = self.features(x)
         fx = self.proj(fx) # (B, H)
+        if self.use_count_words!=BASELINE and self.incl_lang_inpt:
+            # We dont want to use lang_inpt here because it's the
+            # ground truth for this step. So, we store it in self.lang
+            # for the next step. This only applies if teacher_force_val
+            # is true.
+            if self.lang is not None and lang_inpt is None:
+                lang = self.process_lang_preds(self.lang)
+            if blank_lang or self.lang is None:
+                lang = torch.zeros_like(fx)
+            else:
+                lang = self.lang_consolidator(lang)
+            # concat vision and language vectors along h
+            if self.stack_context:
+                fx = torch.cat([fx,lang], axis=-1)
+            # alternate vision and language vectors in context
+            else:
+                if not self.lstm_lang_first:
+                    fx,lang = lang,fx
+                self.prev_hs.append(lang)
         self.prev_hs.append(fx)
         encs = torch.stack(list(self.prev_hs), dim=1)
         encs = self.pos_enc(encs)
@@ -3017,9 +3093,16 @@ class Transformer(Model):
         langs = []
         for dense in self.lang_denses:
             langs.append(dense(encs))
+        # Need to use lang_inpt for next step, not this step
+        if lang_inpt is None:
+            self.lang = langs
+        else:
+            self.lang = lang_inpt
         return self.output_fxn(self.actn_dense(encs)), langs
 
-    def forward(self, x, tasks, masks=None, *args, **kwargs):
+    def forward(self, x, tasks, masks=None, lang_inpts=None,
+                                            n_targs=None,
+                                            *args, **kwargs):
         """
         Args:
             x: torch FloatTensor (B, S, C, H, W)
@@ -3028,6 +3111,18 @@ class Transformer(Model):
                 Used to remove padding from the attention calculations.
                 Ones denote locations that should be ignored. 0s denote
                 locations that should be included.
+            lang_inpts: None or LongTensor (B,S,M)
+                if not None and self.incl_lang_inpt is true, lang_inpts
+                are used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq.
+                Note, these are the correct labels for the timestep.
+                So, if you are predicting language, you will not want
+                to use the corresponding timestep from this sequence
+                as input to that prediction.
+            n_targs: None or LongTensor (B,S)
+                only applies for gordongames-v11 and v12. this is a
+                vector indicating the number of target objects for the
+                episode.
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
@@ -3039,8 +3134,37 @@ class Transformer(Model):
         b,s,c,h,w = x.shape
         fx = self.features(x.reshape(-1,c,h,w)).reshape(b*s,-1)
         fx = self.proj(fx).reshape(b,s,-1)
+
         # Add conditional vector
-        fx = torch.cat([cdtnl[tasks[:,0]].unsqueeze(1), fx], dim=1)
+        inpt = [cdtnl[tasks[:,0]].unsqueeze(1)]
+
+        # Handle Language. Always use teacher forcing during training
+        if self.use_count_words!=BASELINE and self.incl_lang_inpt:
+            if lang_inpt is None or blank_lang:
+                lang = torch.zeros_like(fx)
+            else:
+                lang = self.lang_consolidator(lang_inpt)
+
+            # Prepend zeros and remove final language token to avoid
+            # providing ground truth to transformer
+            lang = torch.nn.functional.pad(lang[:,:-1],(0,0,1,0))
+            # concat vision and language vectors along h
+            if self.stack_context:
+                fx = torch.cat([fx,lang], axis=-1)
+            # alternate vision and language vectors in context
+            else:
+                temp = torch.zeros(
+                    (b,2*s,fx.shape[-1]),
+                    device=fx.get_device()
+                )
+                if not self.lstm_lang_first:
+                    fx,lang = lang,fx
+                temp[:,::2] = lang
+                temp[:,1::2] = fx
+                fx = temp
+        inpt.append(fx)
+
+        fx = torch.cat(inpt, dim=1)
         encs = self.pos_enc(fx)
         if masks is not None:
             masks = torch.cat([
@@ -3049,10 +3173,12 @@ class Transformer(Model):
             ], dim=1).bool() # cat for the conditional
         encs = self.encoder(
             encs,
-            mask=self.fwd_mask[:s+1,:s+1],
+            mask=self.fwd_mask[:encs.shape[1],:encs.shape[1]],
             src_key_padding_mask=masks
         )
         encs = encs[:,1:] # Remove conditional vector
+        if encs.shape[1] > s+1:
+            encs = encs[:,1::2]
         if self.lnorm:
             encs = self.layernorm(encs)
         encs = encs.reshape(b*s,-1)
@@ -3072,7 +3198,7 @@ class SepTransformer(Transformer):
         enc_layer = nn.TransformerEncoderLayer(
             self.h_size,
             self.n_heads,
-            3*self.h_size,
+            self.h_mult*self.h_size,
             self.feat_drop_p,
             norm_first=True,
             batch_first=True
