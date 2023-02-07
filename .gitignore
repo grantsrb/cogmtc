@@ -120,9 +120,11 @@ delete_me.*
 deleteme.*
 deleteme/*
 */*_results.txt
-jupyter-notebooks/*.ipynb
-jupyter-notebooks/*.csv
-jupyter-notebooks/*.backup
+analysis/*.ipynb
+analysis/*.csv
+analysis/*.backup
+analysis/*.pdf
+analysis/*.png
 training_scripts/*.csv
 */hyps/*
 .DS_Store
@@ -131,3 +133,5 @@ training_scripts/*.csv
 *.pth
 *.p
 notes.txt
+
+
