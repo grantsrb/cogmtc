@@ -25,6 +25,16 @@ PIRAHA_WEIGHTS = {
         9:   torch.FloatTensor([.3, .7]),
         10:  torch.FloatTensor([.3, .7]),
     }
+#PIRAHA_WEIGHTS = {
+#        3:   torch.FloatTensor([.6, .4]),
+#        4:   torch.FloatTensor([.4, .6]),
+#        5:   torch.FloatTensor([.4, .6]),
+#        6:   torch.FloatTensor([.4, .6]),
+#        7:   torch.FloatTensor([.5, .5]),
+#        8:   torch.FloatTensor([.25, .75]),
+#        9:   torch.FloatTensor([.25, .75]),
+#        10:  torch.FloatTensor([.25, .75]),
+#    }
 
 if torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")

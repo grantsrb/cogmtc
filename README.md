@@ -233,7 +233,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         to the language layers. The second h vector will then
         be used for the action layers. If False, the second h
         vector will be used for language and the first h for
-        actions. Defaults to True
+        actions. Defaults to True. For transformers, this determines
+        if the language tokens or vision tokens come first when
+        alternating within context. Only applies in transformersif
+        stack_context is false.
     "stagger_preds": bool
         if true, the language and action predictions are made from
         different LSTMs within the model if possible. The order is
@@ -254,7 +257,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         DoubleVaryLSTM model type and `incl_lang_preds` is true.
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs
-        during training. only applies if incl_lang_inpt is true.
+        for each training iteration. only applies if incl_lang_inpt
+        is true.
     "shuffle_teacher_lang": bool
         if true, will shuffle the teacher forced lang intputs during
         training. Does not do so during validation.
@@ -535,6 +539,13 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         propagation context-window, you can set this value higher than
         `seq_len`. This will make the context window larger without
         backpropping through the increased number of tokens.
+    "stack_context": bool
+        if true, transformer tokens will consist of the concatenation
+        of the visual latent vector with the language embedding. These
+        will each be half of h_size, combined to make h_size tokens for
+        the transformer context. Otherwise the language and vision
+        vectors will alternate in context. Their ordering in context
+        will depend on lstm_lang_first.
 
     "n_inner_loops": 1
         the number of times to train on one collected iteration of data.

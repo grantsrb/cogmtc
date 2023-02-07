@@ -523,6 +523,8 @@ class DataCollector:
         # Handle data sizes differently if Transformer model types
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
+            if mt==models.MODEL_TYPES.TRANSFORMER:
+                self.hyps["lang_teacher_p"] = 1
             exp_len = self.hyps["exp_len"]
             seq_len = self.hyps["seq_len"]
             bsize   = self.hyps["batch_size"]
@@ -793,8 +795,8 @@ class Runner:
                              timestep t
                     "masks": Collects a mask determining whether or not
                              a timestep t occurred or not. Only used
-                             for transformer model variants
-                            zeros denote used spaces, ones denote padding
+                             for transformer model variants. zeros
+                             denote used spaces, ones denote padding
                     "tasks": Collects integers describing the task
                              performed at each timestep t
                     "n_targs": Collects the number of targets for the

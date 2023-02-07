@@ -1046,7 +1046,8 @@ def hyps_error_catching(hyps):
     # If model is of Transformer (TRANSFORMER) type, this is denoted
     # in the model architecture which we do not have at this point.
     # Thus, many hyperparameters are changed in the `experience.py`
-    # module to protect against failed hyperparameter combinations.
+    # module to protect against failed hyperparameter combinations
+    # for transformers.
     if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM"}:
         hyps["incl_lang_inpt"] = True
         hyps["n_lstms"] = max(2,try_key(hyps,"n_lstms",2))
@@ -1054,6 +1055,8 @@ def hyps_error_catching(hyps):
     elif hyps["model_type"] == "DblBtlComboLSTM":
         hyps["incl_lang_inpt"] = True
         print("updating incl_lang_inpt to true for DblBtlComboLSTM")
+    elif hyps["model_type"] in {"Transformer", "SepTransformer"}:
+        hyps["lang_teacher_p"] = 1
 
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==BASELINE:
