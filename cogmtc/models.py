@@ -438,7 +438,8 @@ class Model(CoreModule):
         self.langactn_inpt_type = langactn_inpt_type
         self.zero_after_stop = zero_after_stop
         self.use_count_words = use_count_words
-        self.max_ctx_len = 128 if max_ctx_len is None else max_ctx_len
+        self.max_ctx_len = 2*self.seq_len if max_ctx_len is None else\
+                                                           max_ctx_len
         self.vision_type = vision_type
         self.learn_h = learn_h
         self.scaleshift = scaleshift
@@ -546,6 +547,33 @@ class Model(CoreModule):
                     legacy=self.legacy
                 )
             self.lang_denses.append(dense)
+
+    def process_lang_preds(self, langs):
+        """
+        Assists in recording the language prediction that will
+        potentially be used in the next time step. Averages over the
+        preds, reshapes them and then takes the argmax
+
+        Args:
+            langs: list of torch FloatTensors [(B,L), (B,L), ...]
+        Returns:
+            lang: torch LongTensor (B,M) or FloatTensor (B, L)
+                the average over the langs list then the argmax over L
+                or L//max_char_seq if using NUMERAL variants. Will
+                return softmax over L dimension if using soft_attn
+        """
+        lang = langs[0].detach().data/len(langs)
+        for i in range(1,len(langs)):
+            lang = lang + langs[i].detach().data/len(langs)
+        if self.soft_attn:
+            lang = torch.softmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            )
+        else:
+            lang = torch.argmax(
+                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
+            ).long()
+        return lang
 
     @property
     def trn_whls(self):
@@ -1507,33 +1535,6 @@ class VaryLSTM(Model):
         self.c = None
         self.lang = None
         self.reset(batch_size=1)
-
-    def process_lang_preds(self, langs):
-        """
-        Assists in recording the language prediction that will
-        potentially be used in the next time step. Averages over the
-        preds, reshapes them and then takes the argmax
-
-        Args:
-            langs: list of torch FloatTensors [(B,L), (B,L), ...]
-        Returns:
-            lang: torch LongTensor (B,M) or FloatTensor (B, L)
-                the average over the langs list then the argmax over L
-                or L//max_char_seq if using NUMERAL variants. Will
-                return softmax over L dimension if using soft_attn
-        """
-        lang = langs[0].detach().data/len(langs)
-        for i in range(1,len(langs)):
-            lang = lang + langs[i].detach().data/len(langs)
-        if self.soft_attn:
-            lang = torch.softmax(
-                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
-            )
-        else:
-            lang = torch.argmax(
-                lang.reshape(len(self.lang),self.max_char_seq,-1),dim=-1
-            ).long()
-        return lang
 
     def reset(self, batch_size=1):
         """
@@ -2920,6 +2921,7 @@ class DoubleLSTM(DoubleVaryLSTM):
 class Transformer(Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.max_char_seq is None: self.max_char_seq = 1
         self.model_type = MODEL_TYPES.TRANSFORMER
 
         # Convs
@@ -3102,6 +3104,7 @@ class Transformer(Model):
 
     def forward(self, x, tasks, masks=None, lang_inpts=None,
                                             n_targs=None,
+                                            blank_lang=False,
                                             *args, **kwargs):
         """
         Args:
@@ -3123,6 +3126,10 @@ class Transformer(Model):
                 only applies for gordongames-v11 and v12. this is a
                 vector indicating the number of target objects for the
                 episode.
+            blank_lang: bool
+                if true, blanks out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
         Returns:
             actns: torch FloatTensor (B, S, N)
                 N is equivalent to self.actn_size
@@ -3140,19 +3147,33 @@ class Transformer(Model):
 
         # Handle Language. Always use teacher forcing during training
         if self.use_count_words!=BASELINE and self.incl_lang_inpt:
-            if lang_inpt is None or blank_lang:
+            if lang_inpts is None or blank_lang:
                 lang = torch.zeros_like(fx)
             else:
-                lang = self.lang_consolidator(lang_inpt)
+                lang = self.lang_consolidator(lang_inpts)
 
             # Prepend zeros and remove final language token to avoid
-            # providing ground truth to transformer
+            # providing ground truth to transformer. Remember that
+            # torch pad takes a backwards tuple because they're dumb af
+            # In this case, lang needs to have 3 dims where seq is the
+            # middle
             lang = torch.nn.functional.pad(lang[:,:-1],(0,0,1,0))
             # concat vision and language vectors along h
             if self.stack_context:
                 fx = torch.cat([fx,lang], axis=-1)
             # alternate vision and language vectors in context
             else:
+                # Need to manipulate mask to accommodate expansion of
+                # sequence length
+                if masks is not None: 
+                    temp = torch.zeros(
+                        (b,2*masks.shape[1]),
+                        dtype=masks.dtype,
+                        device=fx.get_device()
+                    )
+                    temp[:,::2] = masks
+                    temp[:,1::2] = masks
+                    masks = temp
                 temp = torch.zeros(
                     (b,2*s,fx.shape[-1]),
                     device=fx.get_device()
@@ -3167,10 +3188,7 @@ class Transformer(Model):
         fx = torch.cat(inpt, dim=1)
         encs = self.pos_enc(fx)
         if masks is not None:
-            masks = torch.cat([
-                torch.zeros(b,1).to(self.get_device()),
-                masks
-            ], dim=1).bool() # cat for the conditional
+            masks = torch.nn.functional.pad(masks, (1,0)).bool()
         encs = self.encoder(
             encs,
             mask=self.fwd_mask[:encs.shape[1],:encs.shape[1]],
