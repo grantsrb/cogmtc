@@ -173,6 +173,7 @@ class Model(CoreModule):
         soft_attn=False,
         record_lang_stats=False,
         emb_ffn=True,
+        lang_incl_layer=0,
         *args, **kwargs
     ):
         """
@@ -391,6 +392,11 @@ class Model(CoreModule):
             emb_ffn: bool
                 if true, the embedding is processed through a
                 feedforward network.
+            lang_incl_layer: int
+                the lstm layer that the language predictions should be
+                fed into in the model. 0 means the lang pred is fed
+                into the policy as early as possible. -1 uses the
+                last lstm in the policy chain.
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -410,6 +416,11 @@ class Model(CoreModule):
         self.n_lang_denses = n_lang_denses
         self._trn_whls = nn.Parameter(torch.ones(1), requires_grad=False)
         self.lstm_lang_first = lstm_lang_first
+        """
+            n_lstms: int
+                the number of lstms for the model. Only applies for
+                some model types.
+        """
         self.n_lstms = 1
         self.env_types = env_types
         self.env2idx = {k:i for i,k in enumerate(self.env_types)}
@@ -462,6 +473,7 @@ class Model(CoreModule):
         self.soft_attn = soft_attn
         self.record_lang_stats = record_lang_stats
         self.emb_ffn = emb_ffn
+        self.lang_incl_layer = lang_incl_layer
 
     def initialize_conditional_variables(self):
         """
@@ -2126,25 +2138,31 @@ class NSepLSTM(SeparateLSTM):
         self.n_lstms = n_lstms # The number of LSTMs including the lang lstm 
         self.n_lang_denses = 1
         del self.actn_lstm
+        del self.lstm
 
         size = self.flat_size + self.h_size # add hsize for condtional
         self.lang_lstm = nn.LSTMCell(size, self.h_size)
 
+        lil = self.lang_incl_layer
+        if lil == 0:
+            size = size + self.h_size # Will include lang prediction here
         self.lstms = nn.ModuleList([
-            self.lstm
+            nn.LSTMCell(size, self.h_size)
         ])
-        del self.lstm
 
         if self.bottleneck:
+            assert lil == 0
             self.lstms[0] = nn.LSTMCell(self.h_size, self.h_size)
 
-        for i in range(2, self.n_lstms):
+        for i in range(1, self.n_lstms-1):
             size = self.h_size
             if self.skip_lstm:
                 assert not self.bottleneck,\
                             "bottleneck and skip_lstm are incompatible"
                 # add additional h_size here for conditional input
                 size = self.h_size + size + self.flat_size
+            if lil==i or (lil==-1 and i==self.n_lstms-2):
+                size += self.h_size
             self.lstms.append( nn.LSTMCell(size, self.h_size) )
 
         if self.learn_h:
@@ -2229,8 +2247,11 @@ class NSepLSTM(SeparateLSTM):
 
         if self.bottleneck:
             cat = lang_inpt
-        else:
+        elif self.lang_incl_layer==0:
             inpt = [fx, cdtnl[mask], lang_inpt]
+            cat = torch.cat(inpt, dim=-1)
+        else:
+            inpt = [fx, cdtnl[mask]]
             cat = torch.cat(inpt, dim=-1)
 
         h, c = self.lstms[0]( cat, (self.hs[0][mask], self.cs[0][mask]) )
@@ -2241,9 +2262,13 @@ class NSepLSTM(SeparateLSTM):
         hs = [h]
         cs = [c]
 
+        lil = self.lang_incl_layer
         for i in range(1, len(self.lstms)):
             inpt = h
-            if self.skip_lstm: 
+            if lil==i or (lil==-1 and i==len(self.lstms)-1):
+                inpt = [inpt, lang_inpt]
+                inpt = torch.cat(inpt, dim=-1)
+            elif self.skip_lstm: 
                 inpt = [inpt, cat]
                 inpt = torch.cat(inpt, dim=-1)
 
@@ -2258,6 +2283,213 @@ class NSepLSTM(SeparateLSTM):
         hs.append(lang_h)
         cs.append(lang_c)
 
+        for i in range(len(self.hs)):
+            temp_h = torch.zeros_like(self.hs[i])
+            temp_h[mask] = hs[i]
+            self.hs[i] = temp_h
+            temp_c = torch.zeros_like(self.cs[i])
+            temp_c[mask] = cs[i]
+            self.cs[i] = temp_c
+
+        actn = self.output_fxn(actn)
+        temp_actn = torch.zeros(x.shape[0],actn.shape[-1],device=device)
+        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
+        temp_actn[mask] = actn
+        temp_lang[mask] = lang
+        return temp_actn, [temp_lang]
+
+
+class PreNSepLSTM(SeparateLSTM):
+    """
+    This model builds off the NSepLSTM model type. This one is different
+    in that allows you to specify the n_pre_lstms
+    and n_lang_lstms counts. These allow for an arbitrary number of
+    lstms following the visual vector before the language split, and
+    an arbitrary number of lstms for the language pathway.
+    """
+    def __init__(self, n_pre_lstms=0, n_lang_lstms=1, n_actn_lstms=2,
+                                                      *args, **kwargs):
+        """
+        Args:
+            n_pre_lstms: int
+                determines the number of lstms directly following the
+                visual latent vector
+            n_lang_lstms: int
+                determines the number of LSTMs in the language pathway
+                following the pre pathway
+            n_actn_lstms: int
+                determines the number of LSTMs in the actn pathway
+                following the pre pathway
+        """
+        super().__init__(*args, **kwargs)
+        if not self.incl_lang_inpt:
+            print("SeparateLSTM variants always include lang input")
+        if self.bottleneck: raise NotImplemented
+        if self.skip_lstm: raise NotImplemented
+        self.n_pre = n_pre_lstms
+        assert not (self.splt_feats and self.n_pre>0) 
+        self.n_lang = n_lang_lstms
+        self.n_actn = n_actn_lstms
+        self.n_lstms = self.n_pre + self.n_lang + self.n_actn
+        self.n_lang_denses = 1
+        del self.actn_lstm
+        del self.lstm
+
+        # Pre LSTMS
+        self.pre_lstms = nn.ModuleList([
+          nn.LSTMCell(self.h_size,self.h_size)for i in range(self.n_pre)
+        ])
+
+        # Lang LSTMS
+        self.lang_lstms = nn.ModuleList([
+          nn.LSTMCell(self.h_size,self.h_size)for i in range(self.n_lang)
+        ])
+
+        # Actn LSTMS
+        lil = self.lang_incl_layer
+        size = self.h_size
+        if lil == 0: size += self.h_size
+        self.lstms = nn.ModuleList([ nn.LSTMCell(size, self.h_size) ])
+
+        for i in range(1, self.n_actn):
+            size = self.h_size
+            if lil==i or (lil==-1 and i==self.n_actn-1):
+                size += self.h_size
+            self.lstms.append( nn.LSTMCell(size, self.h_size) )
+
+        if self.learn_h: self.get_inits()
+        self.reset(1)
+
+        self.make_actn_dense()
+        self.make_lang_denses()
+        self.cdtnl_proj = nn.Linear(
+            self.flat_size+self.h_size,self.h_size
+        )
+        if self.splt_feats:
+            self.lang_cdtnl_proj = nn.Linear(
+                self.flat_size+self.h_size,self.h_size
+            )
+
+    def step(self,x,cdtnl,mask=None,lang_inpt=None,blank_lang=False,
+                                                   avg_lang=False,
+                                                   *args,**kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+                a single step of observations
+            cdtnl: torch FloatTensor (B, E)
+                the conditional latent vectors
+            mask: torch LongTensor or BoolTensor (B,)
+                Used to avoid continuing calculations in the sequence
+                when the sequence is over. Ones in the mask denote
+                that the time step should be ignored, zeros should
+                be included.
+            lang_inpt: None or LongTensor (B,M) or (B,)
+                if not None and self.incl_lang_inpt is true, lang_inpt
+                is used as an additional input into the lstm. They
+                should be token indicies. M is the max_char_seq
+            blank_lang: bool
+                if true, blanks out the language before inputting
+                into the model. only applies if incl_lang_inpt is
+                true
+            avg_lang: bool
+                if true, uses the average of the language embeddings
+                as the input to the policy. only applies if
+                incl_lang_inpt is true
+        Returns:
+            actn: torch Float Tensor (B, K)
+            langs: list of torch Float Tensor [ (B, L) ]
+        """
+        # Not that the mask gets flipped to where 1 means keep the
+        # calculation in the data
+        if mask is None:
+            mask = torch.ones(x.shape[0]).bool()
+        else:
+            mask = (1-mask).bool()
+        device = self.get_device()
+        self.lang = self.lang.to(device)
+        mask = mask.to(device)
+        for i in range(self.n_lstms):
+            self.hs[i] = self.hs[i].to(device)
+            self.cs[i] = self.cs[i].to(device)
+
+        # Features
+        fx = self.features(x[mask])
+        if self.splt_feats:
+            midpt = int(fx.shape[1]//2)
+            lang_fx = fx[:,:midpt]
+            lang_fx = lang_fx.reshape(len(lang_fx),-1)
+            fx = fx[:,midpt:]
+            cat = torch.cat([lang_fx, cdtnl[mask]], dim=-1)
+            lang_fx = self.lang_cdtnl_proj(cat)
+        fx = fx.reshape(len(fx), -1) # (B, N)
+        cat = torch.cat([fx, cdtnl[mask]], dim=-1)
+        fx = self.cdtnl_proj(cat)
+
+        # Pre Pathway
+        hs = []
+        cs = []
+        if self.n_pre > 0:
+            h = fx
+            for i in range(self.n_pre):
+                h, c = self.pre_lstms[i](
+                    h, (self.hs[i][mask], self.cs[i][mask])
+                )
+                hs.append(h)
+                cs.append(c)
+            fx = h
+
+        if not self.splt_feats:
+            lang_fx = fx
+
+        # Lang Pathway
+        lang_h,lang_c = (
+            self.hs[-self.n_lang][mask],
+            self.cs[-self.n_lang][mask]
+        )
+        lang_hs = []
+        lang_cs = []
+        for i in reversed(range(self.n_lang)):
+            lang_h, lang_c = self.lang_lstms[self.n_lang-1-i](
+                lang_h, (self.hs[-i], self.cs[-i])
+            )
+            lang_hs.append(lang_h)
+            lang_cs.append(lang_c)
+
+        # Lang Prediction and Manipulation
+        lang = self.lang_denses[0](lang_h)
+        if lang_inpt is None:
+            lang_inpt = self.process_lang_preds([lang])
+        else:
+            lang_inpt = lang_inpt[mask]
+        lang_inpt = self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
+        if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
+
+        # Action Pathway
+        h = fx
+        lil = self.lang_incl_layer
+        for i in range(self.n_actn):
+            if lil==i or (lil==-1 and i==len(self.n_actn)-1):
+                h = [h, lang_inpt]
+                h = torch.cat(h, dim=-1)
+            # Keep all lstm type h and c vectors in single list. Thus
+            # we need to be careful with their ordering.
+            idx = i+self.n_pre
+            h, c = self.lstms[i](
+                h, (self.hs[idx][mask], self.cs[idx][mask])
+            )
+            hs.append(h)
+            cs.append(c)
+
+        # Actn Prediction
+        actn = self.actn_dense(hs[-1])
+
+        # Cleanup
+        for lang_h, lang_c in zip(lang_hs, lang_cs):
+            hs.append(lang_h)
+            cs.append(lang_c)
         for i in range(len(self.hs)):
             temp_h = torch.zeros_like(self.hs[i])
             temp_h[mask] = hs[i]

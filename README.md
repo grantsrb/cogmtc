@@ -214,7 +214,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         This ensures that the language and policy pathways do
         not overlap at all.
     "n_lstms": int
-        the number of LSTMs to use in the model type. This only applies
+        The number of LSTMs to use in the model type. This only applies
         for the NVaryLSTM and NSepLSTM variants. In the NVaryLSTM, the
         `n_lstms` arg determines how many LSTMs are chained together for
         the policy network. The language output is either off the
@@ -223,6 +223,18 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         LSTMs for the policy network and uses 1 LSTM for the language
         prediction which is used to select an embedding as additional
         input into the policy network's first LSTM.
+
+        NOTE: See n_pre_lstms, n_lang_lstms, and n_actn_lstms for 
+        PreNSepLSTM model types.
+    "n_pre_lstms": int
+        determines the number of lstms directly following the
+        visual latent vector for PreNSepLSTM model types
+    "n_lang_lstms": int
+        determines the number of LSTMs in the language pathway
+        following the pre pathway for PreNSepLSTM model types
+    "n_actn_lstms": int
+        determines the number of LSTMs in the actn pathway
+        following the pre pathway for PreNSepLSTM model types
     "lstm_lang": bool
         if true, and using numeral system, the language output will be
         done using an LSTM rather than a dense network. only applies
@@ -247,6 +259,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         of the language output for the current timestep is included as
         input into the action prediction. If false,
         the language output is not included.
+    "lang_inpt_layer": int
+        index of the lstm within the policy pathway to feed the lang
+        prediction. 0 means the earliest lstm, this is the default.
+        -1 means the lstm just before the action prediction. Only
+        applicable in NSepLSTM variants.
     "extra_lang_pred": bool
         if true, the DoubleVaryLSTM will include an extra
         language prediction system that it will use for making

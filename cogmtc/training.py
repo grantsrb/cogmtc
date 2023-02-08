@@ -1048,7 +1048,7 @@ def hyps_error_catching(hyps):
     # Thus, many hyperparameters are changed in the `experience.py`
     # module to protect against failed hyperparameter combinations
     # for transformers.
-    if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM"}:
+    if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM", "PreNSepLSTM"}:
         hyps["incl_lang_inpt"] = True
         hyps["n_lstms"] = max(2,try_key(hyps,"n_lstms",2))
         print("updating incl_lang_inpt to true for SeparateLSTM variants")
@@ -1065,6 +1065,9 @@ def hyps_error_catching(hyps):
             hyps["n_lstms"] = 2
         elif hyps["model_type"] == "NSepLSTM":
             hyps["model_type"] = "NVaryLSTM"
+        elif hyps["model_type"] == "PreNSepLSTM":
+            hyps["model_type"] = "NVaryLSTM"
+            hyps["n_lstms"] = hyps["n_pre_lstms"] + hyps["n_actn_lstms"]
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
         hyps["splt_feats"] = False
@@ -1129,7 +1132,8 @@ def hyps_error_catching(hyps):
         hyps["splt_feats"] = hyps["splt_feat"]
         del hyps["splt_feat"]
         print("splt_feat does not exist, renaming to splt_feats")
-    if hyps["model_type"]!="NSepLSTM" and try_key(hyps,"splt_feats",False):
+    if not (hyps["model_type"] in {"NSepLSTM", "PreNSepLSTM"}) and\
+                                    try_key(hyps,"splt_feats",False):
         raise NotImplemented
 
     if try_key(hyps, "pre_rand", False):

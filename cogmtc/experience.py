@@ -521,6 +521,12 @@ class DataCollector:
         self.hyps = hyps
 
         # Handle data sizes differently if Transformer model types
+        # Here we abuse the exp_len hyperparameter to use it with
+        # the runners. The runners take exp_len steps. In cases
+        # where we don't roll_data, we want to only take seq_len
+        # environment steps before resetting. We can do this by
+        # introducing an extra collection_size parameter so that we
+        # can replace the exp_len parameter with seq_len
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
             if mt==models.MODEL_TYPES.TRANSFORMER:
