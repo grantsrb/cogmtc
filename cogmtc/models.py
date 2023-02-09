@@ -2306,6 +2306,8 @@ class PreNSepLSTM(SeparateLSTM):
     and n_lang_lstms counts. These allow for an arbitrary number of
     lstms following the visual vector before the language split, and
     an arbitrary number of lstms for the language pathway.
+
+    We apply layer norm after the lstms, not before.
     """
     def __init__(self, n_pre_lstms=0, n_lang_lstms=1, n_actn_lstms=2,
                                                       *args, **kwargs):
@@ -2326,6 +2328,7 @@ class PreNSepLSTM(SeparateLSTM):
             print("SeparateLSTM variants always include lang input")
         if self.bottleneck: raise NotImplemented
         if self.skip_lstm: raise NotImplemented
+        if self.c_lnorm: print("C Lnorm is stupid. Ignoring it")
         self.n_pre = n_pre_lstms
         assert not (self.splt_feats and self.n_pre>0) 
         self.n_lang = n_lang_lstms
@@ -2359,6 +2362,17 @@ class PreNSepLSTM(SeparateLSTM):
 
         if self.learn_h: self.get_inits()
         self.reset(1)
+
+        if self.lnorm:
+            self.pre_lnorms = nn.ModuleList(
+                [nn.LayerNorm(self.h_size) for _ in range(self.n_pre)]
+            )
+            self.lang_lnorms = nn.ModuleList(
+                [nn.LayerNorm(self.h_size) for _ in range(self.n_lang)]
+            )
+            self.actn_lnorms = nn.ModuleList(
+                [nn.LayerNorm(self.h_size) for _ in range(self.n_actn)]
+            )
 
         self.make_actn_dense()
         self.make_lang_denses()
@@ -2437,6 +2451,7 @@ class PreNSepLSTM(SeparateLSTM):
                 h, c = self.pre_lstms[i](
                     h, (self.hs[i][mask], self.cs[i][mask])
                 )
+                if self.lnorm: h = self.pre_lnorms[i](h)
                 hs.append(h)
                 cs.append(c)
             fx = h
@@ -2452,9 +2467,11 @@ class PreNSepLSTM(SeparateLSTM):
         lang_hs = []
         lang_cs = []
         for i in reversed(range(self.n_lang)):
-            lang_h, lang_c = self.lang_lstms[self.n_lang-1-i](
+            idx = self.n_lang-1-i
+            lang_h, lang_c = self.lang_lstms[idx](
                 lang_h, (self.hs[-i], self.cs[-i])
             )
+            if self.lnorm: lang_h = self.lang_lnorms[idx](lang_h)
             lang_hs.append(lang_h)
             lang_cs.append(lang_c)
 
@@ -2480,6 +2497,7 @@ class PreNSepLSTM(SeparateLSTM):
             h, c = self.lstms[i](
                 h, (self.hs[idx][mask], self.cs[idx][mask])
             )
+            if self.lnorm: h = self.actn_lnorms[i](h)
             hs.append(h)
             cs.append(c)
 
