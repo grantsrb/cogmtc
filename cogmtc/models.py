@@ -2355,16 +2355,10 @@ class PreNSepLSTM(SeparateLSTM):
         ])
 
         # Actn LSTMS
-        lil = self.lang_incl_layer
-        size = self.h_size
-        if lil == 0: size += self.h_size
+        size = self.h_size*2
         self.lstms = nn.ModuleList([ nn.LSTMCell(size, self.h_size) ])
-
         for i in range(1, self.n_actn):
-            size = self.h_size
-            if lil==i or (lil==-1 and i==self.n_actn-1):
-                size += self.h_size
-            self.lstms.append( nn.LSTMCell(size, self.h_size) )
+            self.lstms.append( nn.LSTMCell(self.h_size, self.h_size) )
 
         if self.learn_h: self.get_inits()
         self.reset(1)
@@ -2439,11 +2433,11 @@ class PreNSepLSTM(SeparateLSTM):
         fx = self.features(x[mask])
         if self.splt_feats:
             midpt = int(fx.shape[1]//2)
+            fx = fx[:,midpt:]
             lang_fx = fx[:,:midpt]
             lang_fx = lang_fx.reshape(len(lang_fx),-1)
-            fx = fx[:,midpt:]
             cat = torch.cat([lang_fx, cdtnl[mask]], dim=-1)
-            lang_fx = self.lang_cdtnl_proj(cat)
+            lang_h = self.lang_cdtnl_proj(cat)
         fx = fx.reshape(len(fx), -1) # (B, N)
         cat = torch.cat([fx, cdtnl[mask]], dim=-1)
         fx = self.cdtnl_proj(cat)
@@ -2462,25 +2456,19 @@ class PreNSepLSTM(SeparateLSTM):
                 cs.append(c)
             fx = h
 
-        if not self.splt_feats:
-            lang_fx = fx
+        if not self.splt_feats: lang_h = fx
 
-        # Lang Pathway
-        lang_h,lang_c = (
-            self.hs[-self.n_lang][mask],
-            self.cs[-self.n_lang][mask]
-        )
         lang_hs = []
         lang_cs = []
         for i in reversed(range(self.n_lang)):
             idx = self.n_lang-1-i
             if self.cut_lang_grad and i==self.n_lang-1:
                 lang_h, lang_c = self.lang_lstms[idx](
-                    lang_h.data, (self.hs[-i], self.cs[-i])
+                    lang_h.data, (self.hs[-i][mask], self.cs[-i][mask])
                 )
             else:
                 lang_h, lang_c = self.lang_lstms[idx](
-                    lang_h, (self.hs[-i], self.cs[-i])
+                    lang_h, (self.hs[-i][mask], self.cs[-i][mask])
                 )
             if self.lnorm: lang_h = self.lang_lnorms[idx](lang_h)
             lang_hs.append(lang_h)
@@ -2497,9 +2485,8 @@ class PreNSepLSTM(SeparateLSTM):
 
         # Action Pathway
         h = fx
-        lil = self.lang_incl_layer
         for i in range(self.n_actn):
-            if lil==i or (lil==-1 and i==len(self.n_actn)-1):
+            if i==0:
                 h = [h, lang_inpt]
                 h = torch.cat(h, dim=-1)
             # Keep all lstm type h and c vectors in single list. Thus
