@@ -264,6 +264,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         prediction. 0 means the earliest lstm, this is the default.
         -1 means the lstm just before the action prediction. Only
         applicable in NSepLSTM variants.
+    "cut_lang_grad": bool
+        if true, the gradient from the language pathway is not
+        propagated beyond the first language lstm
     "extra_lang_pred": bool
         if true, the DoubleVaryLSTM will include an extra
         language prediction system that it will use for making

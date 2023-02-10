@@ -174,6 +174,7 @@ class Model(CoreModule):
         record_lang_stats=False,
         emb_ffn=True,
         lang_incl_layer=0,
+        cut_lang_grad=False,
         *args, **kwargs
     ):
         """
@@ -397,6 +398,9 @@ class Model(CoreModule):
                 fed into in the model. 0 means the lang pred is fed
                 into the policy as early as possible. -1 uses the
                 last lstm in the policy chain.
+            cut_lang_grad: bool
+                if true, the gradient from the language pathway is not
+                propagated beyond the first language lstm
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -474,6 +478,7 @@ class Model(CoreModule):
         self.record_lang_stats = record_lang_stats
         self.emb_ffn = emb_ffn
         self.lang_incl_layer = lang_incl_layer
+        self.cut_lang_grad = cut_lang_grad
 
     def initialize_conditional_variables(self):
         """
@@ -2233,9 +2238,10 @@ class NSepLSTM(SeparateLSTM):
             h = self.h_lang_lnorm(h)
             if self.c_lnorm:
                 c = self.c_lang_lnorm(c)
-        lang_h, lang_c = self.lang_lstm(
-            cat, (h,c)
-        )
+        if self.cut_lang_grad:
+            lang_h, lang_c = self.lang_lstm( cat.data, (h,c) )
+        else:
+            lang_h, lang_c = self.lang_lstm( cat, (h,c) )
         lang = self.lang_denses[0](lang_h)
 
         if lang_inpt is None:
@@ -2468,9 +2474,14 @@ class PreNSepLSTM(SeparateLSTM):
         lang_cs = []
         for i in reversed(range(self.n_lang)):
             idx = self.n_lang-1-i
-            lang_h, lang_c = self.lang_lstms[idx](
-                lang_h, (self.hs[-i], self.cs[-i])
-            )
+            if self.cut_lang_grad and i==self.n_lang-1:
+                lang_h, lang_c = self.lang_lstms[idx](
+                    lang_h.data, (self.hs[-i], self.cs[-i])
+                )
+            else:
+                lang_h, lang_c = self.lang_lstms[idx](
+                    lang_h, (self.hs[-i], self.cs[-i])
+                )
             if self.lnorm: lang_h = self.lang_lnorms[idx](lang_h)
             lang_hs.append(lang_h)
             lang_cs.append(lang_c)
