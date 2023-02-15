@@ -2367,11 +2367,12 @@ class PreNSepLSTM(SeparateLSTM):
             self.pre_lnorms = nn.ModuleList(
                 [nn.LayerNorm(self.h_size) for _ in range(self.n_pre)]
             )
-            self.lang_lnorms = nn.ModuleList(
-                [nn.LayerNorm(self.h_size) for _ in range(self.n_lang)]
-            )
             self.actn_lnorms = nn.ModuleList(
                 [nn.LayerNorm(self.h_size) for _ in range(self.n_actn)]
+            )
+        if self.lang_lnorm:
+            self.lang_lnorms = nn.ModuleList(
+                [nn.LayerNorm(self.h_size) for _ in range(self.n_lang)]
             )
 
         self.make_actn_dense()
@@ -2458,6 +2459,7 @@ class PreNSepLSTM(SeparateLSTM):
 
         if not self.splt_feats: lang_h = fx
 
+        # Lang Pathway
         lang_hs = []
         lang_cs = []
         for i in reversed(range(self.n_lang)):
@@ -2470,7 +2472,7 @@ class PreNSepLSTM(SeparateLSTM):
                 lang_h, lang_c = self.lang_lstms[idx](
                     lang_h, (self.hs[-i][mask], self.cs[-i][mask])
                 )
-            if self.lnorm: lang_h = self.lang_lnorms[idx](lang_h)
+            if self.lang_lnorm: lang_h = self.lang_lnorms[idx](lang_h)
             lang_hs.append(lang_h)
             lang_cs.append(lang_c)
 
