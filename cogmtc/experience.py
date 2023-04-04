@@ -8,7 +8,7 @@ import numpy as np
 import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES, CDTNL_LANG_SIZE
 from cogmtc.oracles import *
-from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS
+from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS, neg_log_sample
 
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
@@ -744,6 +744,26 @@ class DataCollector:
         old_phase = self.phase_q.get()
         self.phase_q.put(phase)
 
+def sample_log(hyps, rand=None):
+    """
+    A helper function to sample from a log distribution. The log
+    distribution is set such that the maximum x value is 1 on the y axis.
+
+    Args:
+        hyps: dict
+            the hyperparameters
+            
+        rand: None or np Random Number Generator
+    Returns:
+        sample: int or None
+            the sampled value if zipf_order is not none
+    """
+    order = try_key(hyps, "zipf_order", None)
+    if order is not None and order > 0:
+        low, high = hyps["targ_range"]
+        return neg_log_sample(low, high, order, rand)
+    return None
+
 def sample_zipfian(hyps, rand=None):
     """
     A helper function to sample from the zipfian distribution according
@@ -757,7 +777,7 @@ def sample_zipfian(hyps, rand=None):
         sample: int or None
             the sampled value if zipf_order is not none
     """
-    order = try_key(hyps, "zipf_order", None)
+    order = hyps.get("zipf_order", None)
     if order is not None and order > 0:
         low, high = hyps["targ_range"]
         return zipfian(low, high, order, rand)
@@ -875,12 +895,16 @@ class Runner:
         if env_type is not None:
             hyps["env_type"] = env_type
         self.env = SequentialEnvironment(**hyps)
+        if hyps.get("log_samp", False):
+            samp = sample_log(hyps, self.rand)
+        else:
+            samp = sample_zipfian(hyps, self.rand)
         state = next_state(
             self.env,
             self.obs_deque,
             obs=None,
             reset=True,
-            n_targs=sample_zipfian(hyps, self.rand)
+            n_targs=samp
         )
         self.state_bookmark = state
         self.h_bookmark = None
@@ -958,13 +982,17 @@ class Runner:
         """
         model.eval()
         debug = try_key(self.hyps,"debug",False) and model.trn_whls<1
+        if self.hyps.get("log_samp", False):
+            samp = sample_log(self.hyps, self.rand)
+        else:
+            samp = sample_zipfian(self.hyps, self.rand)
         if try_key(self.hyps, "reset_trn_env", False):
             state = next_state(
                 self.env,
                 self.obs_deque,
                 obs=None,
                 reset=True,
-                n_targs=sample_zipfian(self.hyps, self.rand)
+                n_targs=samp
             )
             model.reset(1)
         else:
@@ -1016,12 +1044,16 @@ class Runner:
             self.shared_exp["is_animating"][idx,i] = anim
             self.shared_exp["is_pop"][idx,i] = int(info["is_pop"])
 
+            if self.hyps.get("log_samp", False):
+                samp = sample_log(self.hyps, self.rand)
+            else:
+                samp = sample_zipfian(self.hyps, self.rand)
             state = next_state(
                 self.env,
                 self.obs_deque,
                 obs=obs,
                 reset=done,
-                n_targs=sample_zipfian(self.hyps, self.rand)
+                n_targs=samp
             )
             if done:
                 model.reset(1)

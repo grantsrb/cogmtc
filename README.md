@@ -509,6 +509,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         will not hold the necessary 6 value from training on target
         quantities of 7 or greater.
 
+    "log_samp": bool
+        if true, will sample from a log distribution instead of a
+        zifpian distribution. The log sampling uses `zipf_order` for
+        the following proportional probability where max is the max
+        target value and k is the sampled target value.
+            `p(k) ~ (-log(k) + log(max) + 1)^zipf_order`
     "zipf_order": float or None
         if greater than 0, the targets are drawn proportionally to the
         zipfian distribution using `zipfian_order` as the exponent.

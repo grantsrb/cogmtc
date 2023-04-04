@@ -220,6 +220,35 @@ def softmax(arr):
     arr = np.exp(arr-np.max(arr))
     return arr / np.sum(arr)
 
+def neg_log_sample(low=1, high=9, order=1, rand=None):
+    """
+    Draws a single integer from low (inclusive) to high (inclusive) in
+    which the probability is proportional to:
+
+        p(k) ~ (-log(k) + log(max) + 1)^order
+
+    Args:
+        low: int (inclusive)
+            the lowest possible value
+        high: int (inclusive)
+            the highest possible value
+        order: float
+            the order of the exponent to weight the probability density
+            for each possible value.
+        rand: None or random number generator
+            if None, uses np.random instead
+    Returns:
+        sample: int
+            returns a sample drawn from a log distribution.
+    """
+    if low == high: return low
+    assert low < high and low > 0
+    probs = np.arange(low, high+1).astype("float")
+    probs = (-np.log(probs) + np.log(high) + 1)**order
+    probs = probs/probs.sum()
+    samp = sample_numpy(probs, rand=rand)
+    return samp + low
+
 def zipfian(low=1, high=9, order=1, rand=None):
     """
     Draws a single integer from low (inclusive) to high (inclusive) in
