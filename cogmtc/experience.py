@@ -526,7 +526,9 @@ class DataCollector:
         # where we don't roll_data, we want to only take seq_len
         # environment steps before resetting. We can do this by
         # introducing an extra collection_size parameter so that we
-        # can replace the exp_len parameter with seq_len
+        # can replace the exp_len parameter with seq_len.
+        # This allows us to collect a batch of rollouts that are
+        # independent of one another along each row.
         mt = models.MODEL_TYPES.GETTYPE(hyps["model_type"])
         if mt==models.MODEL_TYPES.TRANSFORMER or not hyps["roll_data"]:
             if mt==models.MODEL_TYPES.TRANSFORMER:

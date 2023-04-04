@@ -187,7 +187,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "pre_rand": bool
         if true, uses random labels for language pretrainings. Currently
         only implemented for English count words. Only applies during
-        phase 0.
+        phase 0 on the first phase.
     "first_phase": int (0, 1 or 2)
         this determines if the model will be trained with language,
         actions, or both during the first phase of the training.
