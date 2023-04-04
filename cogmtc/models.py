@@ -3669,4 +3669,3 @@ class ConditionalLSTM(CoreModule):
                 assert False
         return h
 
-
