@@ -2337,7 +2337,7 @@ class PreNSepLSTM(SeparateLSTM):
         if self.c_lnorm: print("C Lnorm is stupid. Ignoring it")
         self.n_pre = n_pre_lstms
         assert not (self.splt_feats and self.n_pre>0) 
-        self.n_lang = n_lang_lstms
+        self.n_lang = max(n_lang_lstms, 1)
         self.n_actn = n_actn_lstms
         self.n_lstms = self.n_pre + self.n_lang + self.n_actn
         self.n_lang_denses = 1
@@ -2355,7 +2355,8 @@ class PreNSepLSTM(SeparateLSTM):
         ])
 
         # Actn LSTMS
-        size = self.h_size*2
+        incl_lang = int(self.incl_lang_inpt)
+        size = self.h_size*(1+incl_lang)
         self.lstms = nn.ModuleList([ nn.LSTMCell(size, self.h_size) ])
         for i in range(1, self.n_actn):
             self.lstms.append( nn.LSTMCell(self.h_size, self.h_size) )
@@ -2458,6 +2459,7 @@ class PreNSepLSTM(SeparateLSTM):
 
         if not self.splt_feats: lang_h = fx
 
+        h = fx
         lang_hs = []
         lang_cs = []
         for i in reversed(range(self.n_lang)):
@@ -2476,19 +2478,21 @@ class PreNSepLSTM(SeparateLSTM):
 
         # Lang Prediction and Manipulation
         lang = self.lang_denses[0](lang_h)
-        if lang_inpt is None:
-            lang_inpt = self.process_lang_preds([lang])
-        else:
-            lang_inpt = lang_inpt[mask]
-        lang_inpt = self.lang_consolidator(lang_inpt,avg_embs=avg_lang)
-        if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
+
+        if self.incl_lang_inpt:
+            if lang_inpt is None:
+                lang_inpt = self.process_lang_preds([lang])
+            else:
+                lang_inpt = lang_inpt[mask]
+            lang_inpt = self.lang_consolidator(
+                lang_inpt, avg_embs=avg_lang
+            )
+            if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
+            h = [h, lang_inpt]
+            h = torch.cat(h, dim=-1)
 
         # Action Pathway
-        h = fx
         for i in range(self.n_actn):
-            if i==0:
-                h = [h, lang_inpt]
-                h = torch.cat(h, dim=-1)
             # Keep all lstm type h and c vectors in single list. Thus
             # we need to be careful with their ordering.
             idx = i+self.n_pre
@@ -2516,8 +2520,8 @@ class PreNSepLSTM(SeparateLSTM):
 
         actn = self.output_fxn(actn)
         temp_actn = torch.zeros(x.shape[0],actn.shape[-1],device=device)
-        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
         temp_actn[mask] = actn
+        temp_lang = torch.zeros(x.shape[0],lang.shape[-1],device=device)
         temp_lang[mask] = lang
         return temp_actn, [temp_lang]
 
