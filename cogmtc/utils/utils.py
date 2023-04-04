@@ -640,7 +640,8 @@ def get_loss_and_accs(phase,
         actn_preds: torch FloatTensor (B,S,A)
             action predictions
         lang_preds: sequence of torch FloatTensors [(B,S,L),(B,S,L),...]
-            a list of language predictions
+            a list of language predictions. Okay to argue empty list
+            or None if phase 1.
         actn_targs: torch LongTensor (B,S) or FloatTensor (B,S,...)
             action targets. The type of tensor depends on if the game
             is in a continuous or discrete action space.
