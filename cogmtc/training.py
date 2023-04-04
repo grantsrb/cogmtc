@@ -1066,8 +1066,7 @@ def hyps_error_catching(hyps):
         elif hyps["model_type"] == "NSepLSTM":
             hyps["model_type"] = "NVaryLSTM"
         elif hyps["model_type"] == "PreNSepLSTM":
-            hyps["model_type"] = "NVaryLSTM"
-            hyps["n_lstms"] = hyps["n_pre_lstms"] + hyps["n_actn_lstms"]
+            hyps["n_lang_lstms"] = 0
         hyps["use_count_words"] = 1
         hyps["second_phase"] = 1
         hyps["splt_feats"] = False
