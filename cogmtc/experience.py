@@ -249,7 +249,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
             self.exp["n_items"][:] = count_list[:,:l]
 
         ucw = self.hyps["use_count_words"]
-        pre_rand = try_key(self.hyps,"pre_rand",False)
+        pre_rand = self.hyps.get("pre_rand",False)
         if pre_rand and phase==0: ucw = RANDOM
         self.exp["lang_labels"] = get_lang_labels(
             self.exp["n_items"],
@@ -1273,7 +1273,7 @@ class ValidationRunner(Runner):
                 avg_acc += acc.item()
 
                 ucw = self.hyps["use_count_words"]
-                pre_rand = try_key(self.hyps,"pre_rand",False)
+                pre_rand = self.hyps.get("pre_rand",False)
                 if pre_rand and self.phase==0: ucw = RANDOM
                 lang_labels = get_lang_labels(
                     data["n_items"],
