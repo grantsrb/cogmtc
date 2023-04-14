@@ -153,9 +153,9 @@ class SequentialEnvironment:
                 prepped_obs = [prepped_obs, *obs[1:]]
         return prepped_obs
 
-    def reset(self, n_targs=None):
+    def reset(self, n_targs=None, held_out=False):
         try:
-            obs = self.env.reset(n_targs=n_targs)[0]
+            obs = self.env.reset(n_targs=n_targs, held_out=held_out)[0]
         except:
             obs = self.env.reset()[0]
         return self.prep_obs(obs)
