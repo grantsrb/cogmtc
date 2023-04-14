@@ -59,7 +59,7 @@ def get_oracle(env_type, *args, **kwargs):
         "An oracle for {} has not yet been implemented".format(env_type)
       )
 
-def next_state(env, obs_deque, obs, reset, n_targs=None):
+def next_state(env, obs_deque, obs, reset, n_targs=None, held_out=False):
     """
     Get the next state of the environment.
 
@@ -70,10 +70,12 @@ def next_state(env, obs_deque, obs, reset, n_targs=None):
             of the environment
     n_targs: int or None
         if int, decides the number of targets for the next episode
+    held_out: bool
+        if true, will use held out trajectories from environment
     """
 
     if reset or obs is None:
-        obs = env.reset(n_targs=n_targs)
+        obs = env.reset(n_targs=n_targs, held_out=held_out)
         for i in range(obs_deque.maxlen-1):
             obs_deque.append(np.zeros(obs.shape))
     obs_deque.append(obs)
@@ -1266,7 +1268,8 @@ class ValidationRunner(Runner):
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
                 data = self.collect_data(
-                    model, env_type, n_targs, teacher_force=tforce
+                    model, env_type, n_targs,
+                    teacher_force=tforce, held_out=True
                 )
                 idx = data["dones"]==1
                 acc = (data["n_items"][idx] == n_targs).float().mean()
@@ -1573,6 +1576,7 @@ class ValidationRunner(Runner):
                            blank_lang=False,
                            avg_lang=False,
                            teacher_force=False,
+                           held_out=False,
                            verbose=False):
         """
         Performs the actual rollouts using the model
@@ -1601,6 +1605,8 @@ class ValidationRunner(Runner):
                 used as the input to the model's policy.
             teacher_force: bool
                 if true, the model uses ground truth language inputs
+            held_out: bool
+                if true, will use held out trajectories from environment
         Returns:
             data: dict
                 keys: str
@@ -1731,7 +1737,8 @@ class ValidationRunner(Runner):
                 self.obs_deque,
                 obs=obs,
                 reset=done,
-                n_targs=n_targs
+                n_targs=n_targs,
+                held_out=held_out
             )
             data["dones"].append(int(done))
             data["rews"].append(rew)
