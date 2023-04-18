@@ -344,7 +344,7 @@ class ExperienceReplay(torch.utils.data.Dataset):
         Uses a permutation to track which index is next.
 
         Note that if __iter__ is called a second time, then any
-        exiting iterable of this class will also be affected!
+        existing iterable of this class will also be affected!
         """
         if self.randomize_order:
             self.idx_order = torch.randperm(self.__len__()).long()

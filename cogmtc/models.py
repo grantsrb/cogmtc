@@ -160,6 +160,8 @@ class Model(CoreModule):
         learn_h=False,
         scaleshift=True,
         fc_lnorm=False,
+        actn_fc_lnorm=False,
+        lang_fc_lnorm=False,
         c_lnorm=True,
         lang_lnorm=False,
         fc_bnorm=False,
@@ -327,6 +329,12 @@ class Model(CoreModule):
             fc_lnorm: bool
                 if true, adds a layernorm layer before each Linear
                 layer in the fully connected layers
+            actn_fc_lnorm: bool
+                if true, adds a layernorm layer before each Linear
+                layer in the action prediction fully connected layers
+            lang_fc_lnorm: bool
+                if true, adds a layernorm layer before each Linear
+                layer in the language prediction fully connected layers
             c_lnorm: bool
                 if true, performs layernorm on all relevant c vectors
             lang_lnorm: bool
@@ -465,6 +473,8 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
+        self.actn_fc_lnorm = actn_fc_lnorm if actn_fc_lnorm else fc_lnorm
+        self.lang_fc_lnorm = lang_fc_lnorm if lang_fc_lnorm else fc_lnorm
         self.c_lnorm = c_lnorm
         self.lang_lnorm = lang_lnorm
         self.fc_bnorm = fc_bnorm
@@ -523,7 +533,7 @@ class Model(CoreModule):
             drop_p=self.drop_p,
             actv_fxn=self.actv_fxn,
             bnorm=self.fc_bnorm,
-            lnorm=self.fc_lnorm,
+            lnorm=self.actn_fc_lnorm,
             scaleshift=self.scaleshift,
             legacy=self.legacy
         )
@@ -551,7 +561,7 @@ class Model(CoreModule):
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
                     lnorm=self.lnorm,
-                    fc_lnorm=self.fc_lnorm,
+                    fc_lnorm=self.lang_fc_lnorm,
                     fc_bnorm=self.fc_bnorm,
                     scaleshift=self.scaleshift
                 )
@@ -565,7 +575,7 @@ class Model(CoreModule):
                     drop_p=self.drop_p,
                     actv_fxn=self.actv_fxn,
                     bnorm=self.fc_bnorm,
-                    lnorm=self.fc_lnorm,
+                    lnorm=self.lang_fc_lnorm,
                     scaleshift=self.scaleshift,
                     legacy=self.legacy
                 )
