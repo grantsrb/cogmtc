@@ -473,8 +473,10 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
-        self.actn_fc_lnorm = actn_fc_lnorm if actn_fc_lnorm else fc_lnorm
-        self.lang_fc_lnorm = lang_fc_lnorm if lang_fc_lnorm else fc_lnorm
+        self.actn_fc_lnorm = actn_fc_lnorm
+        if actn_fc_lnorm is None: self.actn_fc_lnorm = self.fc_lnorm
+        self.lang_fc_lnorm = lang_fc_lnorm
+        if lang_fc_lnorm is None: self.lang_fc_lnorm = self.fc_lnorm
         self.c_lnorm = c_lnorm
         self.lang_lnorm = lang_lnorm
         self.fc_bnorm = fc_bnorm
