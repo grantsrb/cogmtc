@@ -476,6 +476,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         object. A value of 1 means the agent could count the number of
         frames instead of the number of target items. A value of 0 will
         not allow the game to progress past the animation phase.
+    "n_held_outs": int or None
+        the number of held out locations for each target quantity in
+        the gordongames
+    "center_signal": bool
+        determines where the response phase signal pixel goes. if true,
+        it will be centered in the demonstration half of the grid.
+        if false, it will go in the rightmost column one down from the
+        topmost row.
     "targ_range": list of ints (low, high)
         the range of potential target counts. This acts as the default
         if lang_range or actn_range are not specified. both low and
