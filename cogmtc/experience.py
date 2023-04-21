@@ -1645,6 +1645,15 @@ class ValidationRunner(Runner):
                         the hidden states of the model under the keys
                         c0, c1, ...  c vectors are collected after the
                         model processes the current state
+                    player_loc: long tensor (N,)
+                        indicates the column in which the player
+                        was spawed at.
+                    count_loc: long tensor (N,)
+                        indicates the column in which the counting button
+                        was spawed at.
+                    end_loc: long tensor (N,)
+                        indicates the column in which the ending button
+                        was spawed at.
         """
         data = {
             "states":[],
@@ -1661,6 +1670,9 @@ class ValidationRunner(Runner):
             "is_animating":[],
             "is_pop": [],
             "ep_idx":[],
+            "end_col": [],
+            "count_col": [],
+            "player_col": [],
         }
         self.hyps["rand_timing"] = False
         state = self.create_new_env(
@@ -1747,6 +1759,8 @@ class ValidationRunner(Runner):
             keys = ["n_targs","n_items","n_aligned",
                     "disp_targs","is_animating", "is_pop"]
             for k in keys: data[k].append(info[k])
+            keys = ["player_", "count_", "end_"]
+            for k in keys: data[k+"col"].append(info[k+"loc"][1])
 
             if render or self.hyps["render"]:
                 self.env.render()
@@ -1813,7 +1827,8 @@ class ValidationRunner(Runner):
             data["actn_targs"] = torch.LongTensor(data["actn_targs"])
         data["rews"] = torch.FloatTensor(data["rews"])
         keys = ["dones", "grabs", "n_targs", "n_items", "n_aligned",
-                "disp_targs", "is_animating","is_pop", "ep_idx"]
+                "disp_targs", "is_animating","is_pop", "ep_idx",
+                "player_col", "count_col", "end_col"]
         for k in keys: data[k] = torch.LongTensor(data[k])
         if incl_hs:
             if hasattr(model, "hs"):
