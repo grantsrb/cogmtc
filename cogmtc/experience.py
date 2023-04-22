@@ -214,8 +214,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
                         self.hyps["actn_size"]
                     )).float()
         self.info_keys = [
-            "n_targs","n_items","n_aligned","grabs","disp_targs",
-            "is_animating", "is_pop",
+            "n_targs","n_items","n_aligned",
+            "grabs","disp_targs","is_animating",
+            "is_pop", "skipped",
         ]
         for key in self.info_keys:
             self.shared_exp[key] = torch.zeros((
@@ -1045,6 +1046,7 @@ class Runner:
             anim = int(info["is_animating"])
             self.shared_exp["is_animating"][idx,i] = anim
             self.shared_exp["is_pop"][idx,i] = int(info["is_pop"])
+            self.shared_exp['skipped'][idx,i] = int(info["skipped"])
 
             if self.hyps.get("log_samp", False):
                 samp = sample_log(self.hyps, self.rand)
@@ -1428,6 +1430,7 @@ class ValidationRunner(Runner):
         inpts["is_animating"] = data["is_animating"][idxs]
         inpts["ep_idx"] = data["ep_idx"][idxs]
         inpts["is_pop"] = data["is_pop"][idxs]
+        inpts["skipped"] = data["skipped"][idxs]
         inpts = {k:v.cpu().data.numpy() for k,v in inpts.items()}
 
         df = pd.DataFrame(inpts)
@@ -1669,6 +1672,7 @@ class ValidationRunner(Runner):
             "disp_targs":[],
             "is_animating":[],
             "is_pop": [],
+            "skipped": [],
             "ep_idx":[],
             "end_col": [],
             "count_col": [],
@@ -1757,7 +1761,7 @@ class ValidationRunner(Runner):
             data["grabs"].append(info["grab"])
             data["ep_idx"].append(self.ep_idx)
             keys = ["n_targs","n_items","n_aligned",
-                    "disp_targs","is_animating", "is_pop"]
+                    "disp_targs","is_animating", "is_pop", "skipped"]
             for k in keys: data[k].append(info[k])
             keys = ["player_", "count_", "end_"]
             for k in keys: data[k+"col"].append(info[k+"loc"][1])
@@ -1828,7 +1832,7 @@ class ValidationRunner(Runner):
         data["rews"] = torch.FloatTensor(data["rews"])
         keys = ["dones", "grabs", "n_targs", "n_items", "n_aligned",
                 "disp_targs", "is_animating","is_pop", "ep_idx",
-                "player_col", "count_col", "end_col"]
+                "player_col", "count_col", "end_col", "skipped"]
         for k in keys: data[k] = torch.LongTensor(data[k])
         if incl_hs:
             if hasattr(model, "hs"):
