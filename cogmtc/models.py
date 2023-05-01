@@ -68,7 +68,7 @@ def get_fcnet(inpt_size,
         legacy: bool
             if true, matches architecture of legacy models
     """
-    outsize= h_size if n_layers > 1 else outp_size
+    outsize = h_size if n_layers > 1 else outp_size
     block = [  ]
     block.append( nn.Linear(inpt_size, outsize) )
     prev_size = outsize
@@ -1193,6 +1193,67 @@ class RawVision(Model):
 
     def forward(self, x, *args, **kwargs):
         return x
+
+class SimpleFFN(Model):
+    """
+    Use this module to feed the visual input into a feed forward network
+    """
+    def __init__(self, feats_only=True, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model_type = MODEL_TYPES.CNN
+        img_size = int(np.prod(self.inpt_shape[-3:]))
+        self.features = nn.Sequential(
+            Flatten(),
+            get_fcnet(
+                inpt_size=img_size,
+                h_size=self.h_mult*self.h_size,
+                outp_size=self.h_size,
+                n_layers=len(self.depths),
+                drop_p=self.feat_drop_p,
+                bnorm=self.fc_bnorm,
+                lnorm=self.fc_lnorm,
+                scaleshift=self.scaleshift,
+                actv_fxn=self.actv_fxn,
+            )
+        )
+        self.flat_size = self.h_size
+        self.shapes = [ *self.inpt_shape[-3:] ]
+
+        if not feats_only:
+            # Make Action MLP
+            self.make_actn_dense(inpt_size=self.flat_size)
+            self.make_lang_denses(inpt_size=self.flat_size)
+
+    def step(self, x, *args, **kwargs):
+        """
+        Performs a single step rather than a complete sequence of steps
+
+        Args:
+            x: torch FloatTensor (B, C, H, W)
+        Returns:
+            pred: torch Float Tensor (B, K)
+        """
+        fx = self.features(x.reshape(len(x), -1))
+        actn = self.actn_dense(fx)
+        langs = []
+        for dense in self.lang_denses:
+            lang = dense(fx)
+            langs.append(lang)
+        return self.output_fxn(actn), langs
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Args:
+            x: torch FloatTensor (B, S, C, H, W)
+        Returns:
+            actns: torch FloatTensor (B, S, N)
+                N is equivalent to self.actn_size
+        """
+        b,s = x.shape[:2]
+        actn, langs = self.step(x.reshape(-1, *x.shape[2:]))
+        langs = torch.stack(langs, dim=0).reshape(len(langs), b, s, -1)
+        return actn.reshape(b,s,-1), langs
+
 
 class VaryCNN(Model):
     """
