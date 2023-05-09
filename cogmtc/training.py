@@ -493,6 +493,7 @@ class Trainer:
                     #plt.imshow(o)
                     #plt.savefig("imgs/epoch{}_iter{}.png".format(epoch, i))
                     ##plt.show()
+                    print("NULL:", self.hyps["null_label"])
                     for row in range(min(len(obs),5)):
                         print("row:",row)
                         for ii,o in enumerate(obs[row].detach().cpu().numpy()):
@@ -501,6 +502,7 @@ class Trainer:
                             print("n_targs:", n_targs[row,ii].cpu().numpy())
                             print("drops:", drops[row,ii].cpu().numpy())
                             print("labels:", labels[row,ii].cpu().numpy())
+                            print("isPop:", data["is_pop"][row,ii].cpu().numpy())
                             print("actns:", actns[row,ii].cpu().numpy())
                             print("isanim:", data["is_animating"][row,ii].cpu().numpy())
                             print("masks:", masks[row,ii].cpu().numpy())
@@ -1086,7 +1088,7 @@ def hyps_error_catching(hyps):
             try_key(hyps,"langall",False):
         print("Potential conflict between lang_targs_only and langall")
         print("langall takes precedence. lang will occur at all steps")
-    if try_key(hyps, "actnlish", False):
+    if try_key(hyps, "actnlish", False) or hyps.get("nullese", False):
         hyps["langall"] = True
     hyps["count_targs"] = True
     print("Setting count_targs to true")

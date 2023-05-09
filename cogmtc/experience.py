@@ -9,6 +9,7 @@ import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES, CDTNL_LANG_SIZE
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS, neg_log_sample
+from gordongames.envs.ggames.constants import MOVEMENTS
 
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
@@ -33,8 +34,9 @@ def get_actnlish_idx(data):
         idx: bool tensor
             the indices in which actnlish language should be used
     """
-    idx = ((data["n_items"]>=data["n_targs"])&(data["is_animating"]==0))|\
-                                              (data["is_pop"]==0)
+    idx = ~data["is_pop"].bool()
+    #(data["n_items"]>=data["n_targs"])&\
+    #    ((data["is_animating"]==0)&(data["is_pop"]==0)|)
     return idx
 
 def get_oracle(env_type, *args, **kwargs):
@@ -273,6 +275,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
         if try_key(self.hyps, "actnlish", False):
             idx = get_actnlish_idx(self.exp)
             self.exp["lang_labels"][idx] = self.exp["actns"][idx]
+        elif try_key(self.hyps, "nullese", False):
+            idx = get_actnlish_idx(self.exp)
+            self.exp["lang_labels"][idx] = self.hyps["null_label"]
         self.clear_experience()
         return self.exp
 
@@ -614,6 +619,9 @@ class DataCollector:
         elif int(self.hyps["use_count_words"]) == DUPLICATES:
             n_words = n_words*2
         # actnlish defaults to true for ACTIONS in `training.py`
+        # This means that the action type is predicted as the language
+        # output rather than any numerical information. The lang_size
+        # is increased down below when actnlish is determined to be true
         elif int(self.hyps["use_count_words"]) == ACTIONS:
             n_words = 1
         self.hyps["lang_size"] = n_words
@@ -1299,6 +1307,9 @@ class ValidationRunner(Runner):
                 if try_key(self.hyps,"actnlish", False):
                     aidx = get_actnlish_idx(data)
                     lang_labels[aidx] = data["actn_targs"][aidx]
+                elif try_key(self.hyps, "nullese", False):
+                    aidx = get_actnlish_idx(data)
+                    lang_labels[aidx] = self.hyps["null_label"]
                 data["lang_targs"] = lang_labels
 
                 drops = ExperienceReplay.get_drops(
@@ -1782,6 +1793,10 @@ class ValidationRunner(Runner):
                          ((info["n_items"]>=info["n_targs"]) and\
                          not info["is_animating"]) or not info["is_pop"]:
                     lang_targ = targ
+                elif try_key(self.hyps,"nullese", False) and\
+                         ((info["n_items"]>=info["n_targs"]) and\
+                         not info["is_animating"]) or not info["is_pop"]:
+                    lang_targ = self.hyps["null_label"]
                 else:
                     ucw = self.hyps["use_count_words"]
                     pre_rand = try_key(self.hyps,"pre_rand",False)
