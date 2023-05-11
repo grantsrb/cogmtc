@@ -9,7 +9,6 @@ import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES, CDTNL_LANG_SIZE
 from cogmtc.oracles import *
 from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS, neg_log_sample
-from gordongames.envs.ggames.constants import MOVEMENTS
 
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
