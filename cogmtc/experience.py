@@ -277,6 +277,9 @@ class ExperienceReplay(torch.utils.data.Dataset):
         elif try_key(self.hyps, "nullese", False):
             idx = get_actnlish_idx(self.exp)
             self.exp["lang_labels"][idx] = self.hyps["null_label"]
+        if self.hyps.get("skippan", False):
+            idx = self.exp["skipped"].bool()
+            self.exp["lang_labels"][idx] = self.hyps["skip_label"]
         self.clear_experience()
         return self.exp
 
@@ -655,10 +658,17 @@ class DataCollector:
         if try_key(self.hyps,"actnlish",False):
             self.hyps["lang_size"] += self.hyps["actn_size"]
             self.hyps["lang_offset"] = self.hyps["actn_size"]
+        if self.hyps.get("skippan", False):
+            if self.hyps.get("skip_is_null", True):
+                self.hyps["skip_label"] = self.hyps["null_label"]
+            else:
+                self.hyps["skip_label"] = self.hyps["lang_size"]
+                self.hyps["lang_size"] += 1
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
         self.validator.hyps["numeral_base"] = self.hyps["numeral_base"]
         self.validator.hyps["max_lang_targ"] = self.hyps["max_lang_targ"]
         self.validator.hyps["null_label"] = self.hyps["null_label"]
+        self.validator.hyps["skip_label"] = self.hyps["skip_label"]
         self.validator.hyps["STOP"] = self.hyps["STOP"]
         self.validator.hyps["lang_offset"] = self.hyps["lang_offset"]
         self.validator.hyps["lang_size"] = self.hyps["lang_size"]
@@ -1309,6 +1319,9 @@ class ValidationRunner(Runner):
                 elif try_key(self.hyps, "nullese", False):
                     aidx = get_actnlish_idx(data)
                     lang_labels[aidx] = self.hyps["null_label"]
+                if self.hyps.get("skippan", False):
+                    idx = data["skipped"].bool()
+                    lang_labels[idx] = self.hyps["skip_label"]
                 data["lang_targs"] = lang_labels
 
                 drops = ExperienceReplay.get_drops(
@@ -1788,18 +1801,22 @@ class ValidationRunner(Runner):
                     "-- N_Items:", info["n_items"]
                 )
 
-                if try_key(self.hyps,"actnlish", False) and\
+                ucw = self.hyps["use_count_words"]
+                pre_rand = try_key(self.hyps,"pre_rand",False)
+                if pre_rand and self.phase==0:
+                    ucw = RANDOM
+
+                if not pre_rand and self.hyps.get("actnlish", False) and\
                          ((info["n_items"]>=info["n_targs"]) and\
                          not info["is_animating"]) or not info["is_pop"]:
                     lang_targ = targ
-                elif try_key(self.hyps,"nullese", False) and\
-                         ((info["n_items"]>=info["n_targs"]) and\
-                         not info["is_animating"]) or not info["is_pop"]:
+                elif not pre_rand and self.hyps.get("nullese", False) and\
+                                                   not info["is_pop"]:
                     lang_targ = self.hyps["null_label"]
+                elif not pre_rand and self.hyps.get("skippan", False) and\
+                                                        info["skipped"]:
+                    lang_targ = self.hyps["skip_label"]
                 else:
-                    ucw = self.hyps["use_count_words"]
-                    pre_rand = try_key(self.hyps,"pre_rand",False)
-                    if pre_rand and self.phase==0: ucw = RANDOM
                     lang_targ = get_lang_labels(
                         torch.LongTensor([info["n_items"]]),
                         torch.LongTensor([info["n_targs"]]),

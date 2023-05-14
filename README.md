@@ -177,6 +177,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         correct number of times after the animation phase and/or the
         player is no longer on the pile. Overrides `langall` to true.
         will be ignored if actnlish is true.
+    "skippan": bool
+        if true, will include a completely new skip token for language
+        predictions on skipped frames.
+    "skip_is_null": bool
+        if true, will set the skip token equal to the null token to
+        conserve the number of language prediction types.
     "numeral_base": int or None
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
