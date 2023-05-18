@@ -533,7 +533,7 @@ class Trainer:
 
                 inps = None
                 if try_key(self.hyps, "incl_lang_inpt", False):
-                    # No teacher forcing by probability p
+                    # teacher forcing by probability p
                     p = try_key(self.hyps, "lang_teacher_p", 0)
                     if np.random.random() < p:
                         inps = labels.long()
