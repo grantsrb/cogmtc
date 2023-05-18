@@ -288,6 +288,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         in addition to the DoubleVaryLSTM's usual
         language predictions. Only relevant when using the
         DoubleVaryLSTM model type and `incl_lang_preds` is true.
+    "tforce": bool
+        if true, allows teacher forcing. See `lang_teacher_p` to make
+        teacher forcing probabilistic during training. Defaults to
+        always teacher forcing. If `tforce` is false, will not allow
+        teacher forcing.
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs
         for each training iteration. only applies if incl_lang_inpt
@@ -299,6 +304,7 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if true, the correct language inputs are fed into the model
         during validation. Only implemented for ENGLISH language, no
         `actnlish`
+
     "lang_inpt_drop_p": float [0,1]
         the dropout probability on the embeddings of the lang inputs.
         only applies if incl_lang_inpt is true
@@ -434,6 +440,10 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         data collection processes, specify the same environment
         repeatedly. `batch_size` will be forced to be divisible by the
         length of this list.
+    "incl_cdtnl": bool
+        if true, guarantees conditional vector is used in model.
+        If false, the conditional vector is only used when there are
+        more than 1 environment types
     "harsh": bool
         an optional parameter to determine the reward scheme for
         gordongames variants

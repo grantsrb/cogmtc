@@ -177,6 +177,7 @@ class Model(CoreModule):
         emb_ffn=True,
         lang_incl_layer=0,
         cut_lang_grad=False,
+        incl_cdtnl=True,
         *args, **kwargs
     ):
         """
@@ -409,6 +410,10 @@ class Model(CoreModule):
             cut_lang_grad: bool
                 if true, the gradient from the language pathway is not
                 propagated beyond the first language lstm
+            incl_cdtnl: bool
+                if true, guarantees conditional vector is used.
+                Otherwise the conditional is only used when there are
+                more than 1 environment type
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -435,6 +440,9 @@ class Model(CoreModule):
         """
         self.n_lstms = 1
         self.env_types = env_types
+        self.n_env_types = len(set(env_types))
+        self.incl_cdtnl = self.n_env_types>1 or incl_cdtnl
+        print("Including Conditional:", self.incl_cdtnl)
         self.env2idx = {k:i for i,k in enumerate(self.env_types)}
         self.n_envs = len(self.env_types)
         self.initialize_conditional_variables()
@@ -2451,12 +2459,13 @@ class PreNSepLSTM(SeparateLSTM):
 
         self.make_actn_dense()
         self.make_lang_denses()
+        size = self.flat_size + self.h_size*self.incl_cdtnl
         self.cdtnl_proj = nn.Linear(
-            self.flat_size+self.h_size,self.h_size
+            size,self.h_size
         )
         if self.splt_feats:
             self.lang_cdtnl_proj = nn.Linear(
-                self.flat_size+self.h_size,self.h_size
+                size,self.h_size
             )
 
     def step(self,x,cdtnl,mask=None,lang_inpt=None,blank_lang=False,
@@ -2511,10 +2520,14 @@ class PreNSepLSTM(SeparateLSTM):
             fx = fx[:,midpt:]
             lang_fx = fx[:,:midpt]
             lang_fx = lang_fx.reshape(len(lang_fx),-1)
-            cat = torch.cat([lang_fx, cdtnl[mask]], dim=-1)
+            cat = lang_fx
+            if self.incl_cdtnl:
+                cat = torch.cat([lang_fx, cdtnl[mask]], dim=-1)
             lang_h = self.lang_cdtnl_proj(cat)
         fx = fx.reshape(len(fx), -1) # (B, N)
-        cat = torch.cat([fx, cdtnl[mask]], dim=-1)
+        cat = fx
+        if self.incl_cdtnl:
+            cat = torch.cat([fx, cdtnl[mask]], dim=-1)
         fx = self.cdtnl_proj(cat)
 
         # Pre Pathway
