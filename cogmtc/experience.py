@@ -1296,32 +1296,36 @@ class ValidationRunner(Runner):
 
                 ucw = self.hyps["use_count_words"]
                 pre_rand = self.hyps.get("pre_rand",False)
-                if pre_rand and self.phase==0: ucw = RANDOM
-                lang_labels = get_lang_labels(
-                    data["n_items"],
-                    data["n_targs"],
-                    max_targ=self.hyps["max_lang_targ"],
-                    use_count_words=ucw,
-                    max_char_seq=self.hyps["max_char_seq"],
-                    base=self.hyps["numeral_base"],
-                    lang_offset=self.hyps["lang_offset"],
-                    null_label=self.hyps["null_label"],
-                    stop_label=self.hyps["STOP"]
-                )
-                if try_key(self.hyps, "pre_grab_count", False):
-                    lang_labels = describe_then_prescribe(
-                        lang_labels,
-                        data["is_animating"]|data["dones"]
+                if pre_rand and self.phase==0:
+                    lang_labels = torch.randint(
+                        0, hyps["lang_size"], size=lang_labels.shape
+                    ).long()
+                else:
+                    lang_labels = get_lang_labels(
+                        data["n_items"],
+                        data["n_targs"],
+                        max_targ=self.hyps["max_lang_targ"],
+                        use_count_words=ucw,
+                        max_char_seq=self.hyps["max_char_seq"],
+                        base=self.hyps["numeral_base"],
+                        lang_offset=self.hyps["lang_offset"],
+                        null_label=self.hyps["null_label"],
+                        stop_label=self.hyps["STOP"]
                     )
-                if try_key(self.hyps,"actnlish", False):
-                    aidx = get_actnlish_idx(data)
-                    lang_labels[aidx] = data["actn_targs"][aidx]
-                elif try_key(self.hyps, "nullese", False):
-                    aidx = get_actnlish_idx(data)
-                    lang_labels[aidx] = self.hyps["null_label"]
-                if self.hyps.get("skippan", False):
-                    idx = data["skipped"].bool()
-                    lang_labels[idx] = self.hyps["skip_label"]
+                    if try_key(self.hyps, "pre_grab_count", False):
+                        lang_labels = describe_then_prescribe(
+                            lang_labels,
+                            data["is_animating"]|data["dones"]
+                        )
+                    if try_key(self.hyps,"actnlish", False):
+                        aidx = get_actnlish_idx(data)
+                        lang_labels[aidx] = data["actn_targs"][aidx]
+                    elif try_key(self.hyps, "nullese", False):
+                        aidx = get_actnlish_idx(data)
+                        lang_labels[aidx] = self.hyps["null_label"]
+                    if self.hyps.get("skippan", False):
+                        idx = data["skipped"].bool()
+                        lang_labels[idx] = self.hyps["skip_label"]
                 data["lang_targs"] = lang_labels
 
                 drops = ExperienceReplay.get_drops(

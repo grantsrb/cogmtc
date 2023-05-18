@@ -1045,6 +1045,11 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
+    if not hyps.get("tforce", True):
+        hyps["lang_teacher_p"] = 0
+    elif hyps.get("lang_teacher_p", None) is None:
+        hyps["lang_teacher_p"] = 1
+
     # If model is of Transformer (TRANSFORMER) type, this is denoted
     # in the model architecture which we do not have at this point.
     # Thus, many hyperparameters are changed in the `experience.py`
@@ -1058,6 +1063,7 @@ def hyps_error_catching(hyps):
         hyps["incl_lang_inpt"] = True
         print("updating incl_lang_inpt to true for DblBtlComboLSTM")
     elif hyps["model_type"] in {"Transformer", "SepTransformer"}:
+        hyps["tforce"] = True
         hyps["lang_teacher_p"] = 1
 
     # Convert to No-Language Variant if -1 is argued
@@ -1075,6 +1081,7 @@ def hyps_error_catching(hyps):
         hyps["skip_first_phase"] = True
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
+        hyps["tforce"] = False
     elif hyps["use_count_words"] == NUMERAL:
         hyps["lstm_lang"] = True
         print("setting lstm lang to true")
