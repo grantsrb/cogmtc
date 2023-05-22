@@ -1298,7 +1298,7 @@ class ValidationRunner(Runner):
                 pre_rand = self.hyps.get("pre_rand",False)
                 if pre_rand and self.phase==0:
                     lang_labels = torch.randint(
-                        0, hyps["lang_size"], size=lang_labels.shape
+                      0,self.hyps["lang_size"],size=data["n_items"].shape
                     ).long()
                 else:
                     lang_labels = get_lang_labels(
