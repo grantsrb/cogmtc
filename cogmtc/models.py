@@ -441,7 +441,7 @@ class Model(CoreModule):
         self.n_lstms = 1
         self.env_types = env_types
         self.n_env_types = len(set(env_types))
-        self.incl_cdtnl = self.n_env_types>1 or incl_cdtnl
+        self.incl_cdtnl = incl_cdtnl
         print("Including Conditional:", self.incl_cdtnl)
         self.env2idx = {k:i for i,k in enumerate(self.env_types)}
         self.n_envs = len(self.env_types)
