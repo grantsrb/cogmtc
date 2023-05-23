@@ -156,6 +156,8 @@ def make_model(hyps):
         print("Initializing model checkpoint from", folder)
         model.load_state_dict(checkpt["state_dict"])
     elif init_checkpt is not None and init_checkpt.strip()!="":
+        if not os.path.exists(init_checkpt):
+            init_checkpt = os.path.join(hyps["save_root"], init_checkpt)
         print("Initializing from checkpoint", init_checkpt)
         checkpt = load_checkpoint(init_checkpt)
         try:
