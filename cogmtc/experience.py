@@ -1269,7 +1269,7 @@ class ValidationRunner(Runner):
         if torch.cuda.is_available(): torch.cuda.empty_cache()
         model.eval()
         # use this to do extra sampling for select epochs
-        special_epochs = [2**x for x in range(11)]
+        special_epochs = [2**x for x in range(11)]+[100]
         extra_eps = 100
 
         # Reset every on every validation run
