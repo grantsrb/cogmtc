@@ -534,9 +534,9 @@ class Trainer:
                     continue
 
                 inps = None
-                if try_key(self.hyps, "incl_lang_inpt", False):
+                if self.hyps.get("incl_lang_inpt", False):
                     # teacher forcing by probability p
-                    p = try_key(self.hyps, "lang_teacher_p", 0)
+                    p = self.hyps.get( "lang_teacher_p", 0)
                     if np.random.random() < p:
                         inps = labels.long()
                         if try_key(self.hyps,"shuffle_teacher_lang",False):
@@ -1047,6 +1047,8 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
+    # We default to teacher forcing in both of these cases in the case
+    # that the user is not using `tforce` but is using `lang_teacher_p`
     if not hyps.get("tforce", True):
         hyps["lang_teacher_p"] = 0
     elif hyps.get("lang_teacher_p", None) is None:
@@ -1057,7 +1059,7 @@ def hyps_error_catching(hyps):
     # Thus, many hyperparameters are changed in the `experience.py`
     # module to protect against failed hyperparameter combinations
     # for transformers.
-    if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM", "PreNSepLSTM"}:
+    if hyps["model_type"] in {"SeparateLSTM", "NSepLSTM"}:
         hyps["incl_lang_inpt"] = True
         hyps["n_lstms"] = max(2,try_key(hyps,"n_lstms",2))
         print("updating incl_lang_inpt to true for SeparateLSTM variants")
@@ -1084,7 +1086,11 @@ def hyps_error_catching(hyps):
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
         hyps["tforce"] = False
-    elif hyps["use_count_words"] == NUMERAL:
+    elif hyps["aux_lang"]:
+        hyps["incl_lang_inpt"] = False
+        hyps["n_lang_lstms"] = 0
+        
+    if hyps["use_count_words"] == NUMERAL:
         hyps["lstm_lang"] = True
         print("setting lstm lang to true")
     elif hyps["use_count_words"] == ACTIONS:
