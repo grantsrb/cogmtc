@@ -226,6 +226,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         for the language pathway in the NSepLSTM variants.
         This ensures that the language and policy pathways do
         not overlap at all.
+    "aux_lang": bool
+        if true, will set the number of language lstms to 0 and will
+        set `incl_lang_inpt` to false. The goal is to ensure that a
+        language prediction is made directly from the last pre-lstm h
+        vector rather than an additional language lstm.
     "n_lstms": int
         The number of LSTMs to use in the model type. This only applies
         for the NVaryLSTM and NSepLSTM variants. In the NVaryLSTM, the

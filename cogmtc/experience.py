@@ -1268,6 +1268,9 @@ class ValidationRunner(Runner):
         """
         if torch.cuda.is_available(): torch.cuda.empty_cache()
         model.eval()
+        # use this to do extra sampling for select epochs
+        special_epochs = [2**x for x in range(11)]+[100]
+        extra_eps = 100
 
         # Reset every on every validation run
         self.hyps["seed"] = self.seed
@@ -1286,9 +1289,11 @@ class ValidationRunner(Runner):
         for env_type in self.env_types:
             self.oracle = self.oracles[env_type]
             for n_targs in rainj:
+                n_eps = extra_eps if epoch in special_epochs else None
                 data = self.collect_data(
                     model, env_type, n_targs,
-                    teacher_force=tforce, held_out=True
+                    teacher_force=tforce, held_out=True,
+                    n_eps=n_eps
                 )
                 idx = data["dones"]==1
                 acc = (data["n_items"][idx] == n_targs).float().mean()
@@ -1715,7 +1720,8 @@ class ValidationRunner(Runner):
         ep_count = 0
         if n_eps is None:
             n_eps = try_key(self.hyps,"n_eval_eps",10)
-            if self.hyps["exp_name"]=="test": n_eps = 1
+        if self.hyps["exp_name"]=="test": n_eps = 1
+
         # Get the conditional vector
         with torch.no_grad():
             task = self.hyps["env2idx"][self.env.env_type]

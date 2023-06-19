@@ -2051,15 +2051,7 @@ class SeparateLSTM(LSTMOffshoot):
     receives a cut-gradient language input.
     """
     def __init__(self, *args, **kwargs):
-        """
-        """
-        if "incl_lang_inpt" in kwargs and not kwargs["incl_lang_inpt"]:
-            kwargs["incl_lang_inpt"] = True
-            print("Setting incl_lang_inpt to true. "+\
-                    "SeparateLSTM always includes lang input")
         super().__init__(*args, **kwargs)
-        if not self.incl_lang_inpt:
-            print("SeparateLSTM always includes lang input")
         self.n_lstms = 3
         self.n_lang_denses = 1
 
@@ -2386,7 +2378,7 @@ class NSepLSTM(SeparateLSTM):
         return temp_actn, [temp_lang]
 
 
-class PreNSepLSTM(SeparateLSTM):
+class PreNSepLSTM(LSTMOffshoot):
     """
     This model builds off the NSepLSTM model type. This one is different
     in that allows you to specify the n_pre_lstms
@@ -2411,19 +2403,17 @@ class PreNSepLSTM(SeparateLSTM):
                 following the pre pathway
         """
         super().__init__(*args, **kwargs)
-        if not self.incl_lang_inpt:
-            print("SeparateLSTM variants always include lang input")
         if self.bottleneck: raise NotImplemented
         if self.skip_lstm: raise NotImplemented
         if self.c_lnorm: print("C Lnorm is stupid. Ignoring it")
         self.n_pre = n_pre_lstms
+        # Do not want shared lstm pathway if completely splitting visual
+        # pathway
         assert not (self.splt_feats and self.n_pre>0) 
-        self.n_lang = max(n_lang_lstms, 1)
+        self.n_lang = n_lang_lstms
         self.n_actn = n_actn_lstms
         self.n_lstms = self.n_pre + self.n_lang + self.n_actn
         self.n_lang_denses = 1
-        del self.actn_lstm
-        del self.lstm
 
         # Pre LSTMS
         self.pre_lstms = nn.ModuleList([
@@ -2545,8 +2535,8 @@ class PreNSepLSTM(SeparateLSTM):
             fx = h
 
         if not self.splt_feats: lang_h = fx
-
         h = fx
+
         # Lang Pathway
         lang_hs = []
         lang_cs = []
