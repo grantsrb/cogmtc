@@ -42,6 +42,8 @@ def train(rank, hyps, verbose=True):
     # If resuming, hyperparameters are updated appropriately.
     # Actual checkpoint is loaded later.
     _, hyps = get_resume_checkpt(hyps, verbose=verbose)
+    if hyps["use_count_words"]==0:
+        print("WARNING: you are using Inequality lang type")
 
     # Set select defaults and seed
     hyps_default_manipulations(hyps)
@@ -540,7 +542,7 @@ class Trainer:
                     p = self.hyps.get( "lang_teacher_p", 0)
                     if np.random.random() < p:
                         inps = labels.long()
-                        if try_key(self.hyps,"shuffle_teacher_lang",False):
+                        if self.hyps.get("shuffle_teacher_lang",False):
                             s = inps.shape
                             perm = torch.randperm(int(np.prod(s))).long()
                             inps = inps.reshape(-1)[perm].reshape(s)
@@ -1048,13 +1050,6 @@ def hyps_error_catching(hyps):
         hyps["max_steps"] = max_steps
         print("Found impossible max_steps, changing to", max_steps)
 
-    # We default to teacher forcing in both of these cases in the case
-    # that the user is not using `tforce` but is using `lang_teacher_p`
-    if not hyps.get("tforce", True):
-        hyps["lang_teacher_p"] = 0
-    elif hyps.get("lang_teacher_p", None) is None:
-        hyps["lang_teacher_p"] = 1
-
     # If model is of Transformer (TRANSFORMER) type, this is denoted
     # in the model architecture which we do not have at this point.
     # Thus, many hyperparameters are changed in the `experience.py`
@@ -1069,7 +1064,6 @@ def hyps_error_catching(hyps):
         print("updating incl_lang_inpt to true for DblBtlComboLSTM")
     elif hyps["model_type"] in {"Transformer", "SepTransformer"}:
         hyps["tforce"] = True
-        hyps["lang_teacher_p"] = 1
 
     # Convert to No-Language Variant if -1 is argued
     if hyps["use_count_words"]==BASELINE:
@@ -1087,16 +1081,21 @@ def hyps_error_catching(hyps):
         hyps["incl_lang_inpt"] = False
         hyps["incl_actn_inpt"] = False
         hyps["tforce"] = False
-    elif hyps["aux_lang"]:
+    elif hyps.get("aux_lang", False):
         hyps["incl_lang_inpt"] = False
         hyps["n_lang_lstms"] = 0
-        
+
     if hyps["use_count_words"] == NUMERAL:
         hyps["lstm_lang"] = True
         print("setting lstm lang to true")
     elif hyps["use_count_words"] == ACTIONS:
         hyps["actnlish"] = True
         print("actnlish defaults to true for ACTIONS lang type")
+
+    if hyps.get("tforce", False):
+        hyps["lang_teacher_p"] = 1
+    else:
+        hyps["lang_teacher_p"] = 0
 
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]
