@@ -2534,7 +2534,8 @@ class PreNSepLSTM(LSTMOffshoot):
                 cs.append(c)
             fx = h
 
-        if not self.splt_feats: lang_h = fx
+        if not self.splt_feats:
+            lang_h = fx
         h = fx
 
         # Lang Pathway

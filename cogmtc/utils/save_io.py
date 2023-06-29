@@ -3,6 +3,7 @@ import pickle
 import cogmtc.models
 import cogmtc.utils.utils as cuu
 import os
+import math
 
 BEST_CHECKPT_NAME = "best_checkpt_0.pt.best"
 
@@ -158,8 +159,7 @@ def foldersort(x):
             return int(s)
         except:
             pass
-    print("Folder sort splt:", x)
-    assert False
+    return math.inf
 
 def is_model_folder(path, exp_name=None):
     """

@@ -239,7 +239,8 @@ def training_loop(n_epochs,
     # Potentially modify starting epoch for resumption of previous
     # training. Defaults to 0 if not resuming or not same phase
     start_epoch = resume_epoch(trainer)
-    if trainer.hyps["exp_name"]=="test": n_epochs = 2
+    val_mod = trainer.hyps.get("val_mod", 1)
+    if trainer.hyps["exp_name"]=="test": n_epochs = 4
     for epoch in range(start_epoch, n_epochs):
         if verbose:
             print()
@@ -265,7 +266,7 @@ def training_loop(n_epochs,
         trainer.train(model, data_collector.exp_replay, epoch)
 
         # Validate Model by Awaiting Validation Process
-        if epoch > start_epoch:
+        if epoch%val_mod==(val_mod-1) and data_collector.val_is_running:
             if verbose:
                 print("\nAwaiting validator for epoch", epoch-1)
                 if type(model) == cogmtc.models.TestModel:
@@ -275,15 +276,17 @@ def training_loop(n_epochs,
             data_collector.await_validator()
             avg_acc = data_collector.val_q.get()
             trainer.save_best_model(shared_model, avg_acc, epoch-1)
-        shared_model.load_state_dict(model.state_dict())
-        if verbose: print("\nDispatching validator")
-        data_collector.dispatch_validator(epoch)
+        if epoch%val_mod==0 and not data_collector.val_is_running:
+            if verbose: print("\nDispatching validator")
+            shared_model.load_state_dict(model.state_dict())
+            data_collector.dispatch_validator(epoch)
 
         # Clean up the epoch
         trainer.end_epoch(epoch, n_epochs, model)
-    if verbose:
-        print("Awaiting validator")
-    data_collector.await_validator()
+    if data_collector.val_is_running:
+        if verbose:
+            print("Awaiting validator")
+        data_collector.await_validator()
 
 class Trainer:
     """
@@ -1094,6 +1097,9 @@ def hyps_error_catching(hyps):
 
     if hyps.get("tforce", False):
         hyps["lang_teacher_p"] = 1
+        hyps["incl_lang_inpt"] = True
+        hyps["teacher_force_val"] = True
+        print("Setting teacher_force_val to True!!!!!!!!!!!")
     else:
         hyps["lang_teacher_p"] = 0
 

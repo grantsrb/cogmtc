@@ -559,6 +559,7 @@ class DataCollector:
         self.stop_q = mp.Queue(self.n_envs)
         self.val_gate_q = mp.Queue(1)
         self.val_stop_q = mp.Queue(1)
+        self.val_is_running = False
         # Used to update training phase information accross procs
         self.phase_q = mp.Queue(1)
         self.phase_q.put(try_key(hyps, "first_phase", 0))
@@ -745,9 +746,11 @@ class DataCollector:
 
     def await_validator(self):
         self.val_stop_q.get()
+        self.val_is_running = False
 
     def dispatch_validator(self, epoch):
         self.val_gate_q.put(epoch)
+        self.val_is_running = True
 
     def terminate_procs(self):
         """
@@ -1197,7 +1200,6 @@ class ValidationRunner(Runner):
         self.hyps["hold_lang"] = None
         self.hyps["hold_actns"] = None
         self.hyps["hold_outs"] = set()
-        self.hyps["rand_timing"] = False
         print("Validation runner target range:",self.hyps["targ_range"])
         self.phase = phase
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
@@ -1283,7 +1285,7 @@ class ValidationRunner(Runner):
         )
         if self.hyps["exp_name"] == "test":
             rainj = list(range(2,4))+[17,18,19]
-        tforce = try_key(self.hyps,"teacher_force_val",False)
+        tforce = self.hyps.get("teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
         for env_type in self.env_types:
@@ -1710,7 +1712,6 @@ class ValidationRunner(Runner):
             "count_col": [],
             "player_col": [],
         }
-        self.hyps["rand_timing"] = False
         state = self.create_new_env(
             n_targs=n_targs,
             env_type=env_type
@@ -1730,22 +1731,54 @@ class ValidationRunner(Runner):
         give_n = model.add_n2cdtnls is not None
         lang_inpt = None
         done = True
+        contr = self.env.env.controller
+        ucw = self.hyps["use_count_words"]
+        info = dict()
         while ep_count < n_eps:
             # Collect the state of the environment
             data["states"].append(state)
             t_state = torch.FloatTensor(state) # (C, H, W)
-            # Get action prediction
-            if teacher_force and self.hyps["use_count_words"]==ENGLISH:
-                contr = self.env.env.controller
+            # get target action
+            targ = self.oracle(self.env)
+            data["actn_targs"].append(targ)
+
+            if teacher_force and (ucw==ENGLISH or ucw==RANDOM):
                 if contr.n_steps <= contr.n_targs:
                     n_items = contr.n_steps
                 else: n_items = contr.register.n_items
-                label = min(
-                    n_items  + self.hyps["lang_offset"],
-                    model.lang_size-1
-                )
+
+                pre_rand = self.hyps.get("pre_rand",False)
+                if pre_rand and self.phase==0:
+                    ucw = RANDOM
+
+                if "n_items" not in info:
+                    label = self.hyps["lang_offset"]
+                elif not pre_rand and self.hyps.get("actnlish", False) and\
+                         ((contr.n_items>=contr.n_targs) and\
+                         not contr.is_animating) or not contr.is_pop:
+                    label = targ
+                elif not pre_rand and self.hyps.get("nullese", False) and\
+                                                   not contr.is_pop:
+                    label = self.hyps["null_label"]
+                elif not pre_rand and self.hyps.get("skippan", False) and\
+                                                   contr.skipped:
+                    label = self.hyps["skip_label"]
+                else:
+                    if contr.n_steps<=contr.n_targs:
+                        n_items = contr.n_steps
+                    else: n_items = contr.n_items
+                    label = get_lang_labels(
+                        torch.LongTensor([n_items]),
+                        torch.LongTensor([contr.n_targs]),
+                        max_targ=self.hyps["max_lang_targ"],
+                        use_count_words=ucw,
+                        base=self.hyps["numeral_base"],
+                        max_char_seq=self.hyps["max_char_seq"],
+                        lang_offset=self.hyps["lang_offset"],
+                        null_label=self.hyps["null_label"],
+                        stop_label=self.hyps["STOP"]
+                    ).item()
                 lang_inpt = torch.tensor([label], device=DEVICE).long()
-                prev_label = label
 
             inpt = t_state[None].to(DEVICE)
 
@@ -1774,9 +1807,6 @@ class ValidationRunner(Runner):
             data["lang_preds"].append(lang)
             if to_cpu: data["lang_preds"][-1] = lang.cpu()
             actn = self.get_action(actn_pred)
-            # get target action
-            targ = self.oracle(self.env)
-            data["actn_targs"].append(targ)
             # Step the environment (use oracle if phase 0)
             if self.phase == 0: actn = targ
             obs, rew, done, info = self.env.step(actn)
@@ -1802,16 +1832,16 @@ class ValidationRunner(Runner):
             if render or self.hyps["render"]:
                 self.env.render()
             if verbose:
-                if teacher_force and self.hyps["use_count_words"]==ENGLISH:
-                    print()
-                    print("Label", label)
+                print()
                 print("Use count words:", self.hyps["use_count_words"],
+                    "-- Anim:", info["is_animating"],
+                    "-- IsPOP:", info["is_pop"],
+                    "-- Skipped:", info["skipped"],
                     "-- Lang size:", model.lang_size,
                     "-- N_Targs:", info["n_targs"],
                     "-- N_Items:", info["n_items"]
                 )
 
-                ucw = self.hyps["use_count_words"]
                 pre_rand = try_key(self.hyps,"pre_rand",False)
                 if pre_rand and self.phase==0:
                     ucw = RANDOM
@@ -1838,6 +1868,9 @@ class ValidationRunner(Runner):
                         null_label=self.hyps["null_label"],
                         stop_label=self.hyps["STOP"]
                     ).item()
+                if teacher_force and self.hyps["use_count_words"]==ENGLISH:
+                    assert label==lang_targ
+                    print("Label", label, "- Targ:", lang_targ)
                 print("Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--", lang_targ)
@@ -1858,6 +1891,7 @@ class ValidationRunner(Runner):
                 model.reset(1)
                 ep_count += 1
                 self.ep_idx += 1
+                info = dict()
         self.state_bookmark = state
         # Convert data to torch tensors
         # S stands for the collected sequence
