@@ -277,6 +277,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         of the language output for the current timestep is included as
         input into the action prediction. If false,
         the language output is not included.
+    "emb_ffn": bool
+        if true, will apply a feed forward network on any language
+        embeddings used as input to the policy network. only applies
+        when `incl_lang_inpt` is true.
+    "one_hot_embs": bool
+        only applies when using `incl_lang_inpt`. will ensure that all
+        language embeddings used as input to the policy lstms are
+        one-hot encodings if true.
     "lang_inpt_layer": int
         index of the lstm within the policy pathway to feed the lang
         prediction. 0 means the earliest lstm, this is the default.

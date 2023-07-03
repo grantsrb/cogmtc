@@ -174,7 +174,8 @@ class Model(CoreModule):
         splt_feats=False,
         soft_attn=False,
         record_lang_stats=False,
-        emb_ffn=True,
+        emb_ffn=False,
+        one_hot_embs=False,
         lang_incl_layer=0,
         cut_lang_grad=False,
         incl_cdtnl=True,
@@ -402,6 +403,9 @@ class Model(CoreModule):
             emb_ffn: bool
                 if true, the embedding is processed through a
                 feedforward network.
+            one_hot_embs: bool
+                if true, will maintain all embeddings as one-hot
+                encodings.
             lang_incl_layer: int
                 the lstm layer that the language predictions should be
                 fed into in the model. 0 means the lang pred is fed
@@ -497,6 +501,7 @@ class Model(CoreModule):
         self.soft_attn = soft_attn
         self.record_lang_stats = record_lang_stats
         self.emb_ffn = emb_ffn
+        self.one_hot_embs = one_hot_embs
         self.lang_incl_layer = lang_incl_layer
         self.cut_lang_grad = cut_lang_grad
 
@@ -790,7 +795,8 @@ class InptConsolidationModule(nn.Module):
                        soft_attn=False,
                        record_lang_stats=False,
                        alpha=0.99,
-                       emb_ffn=True,
+                       emb_ffn=False,
+                       one_hot_embs=False,
                        *args,**kwargs):
         """
         Args:
@@ -832,10 +838,15 @@ class InptConsolidationModule(nn.Module):
             emb_ffn: bool
                 if true, the embedding is processed through a
                 feedforward network.
+            one_hot_embs: bool
+                if true, will maintain all embeddings as one-hot
+                encodings.
         """
         super().__init__()
         self.lang_size = lang_size
         self.h_size = h_size
+        self.emb_size = self.h_size
+        self.one_hot_embs = one_hot_embs
         self.use_count_words = use_count_words
         self.mcs = 1 if max_char_seq is None or max_char_seq < 1\
                      else max_char_seq
@@ -849,14 +860,18 @@ class InptConsolidationModule(nn.Module):
         self.emb_ffn = emb_ffn
 
         self.embeddings = nn.Embedding(self.lang_size,self.h_size)
+        if self.one_hot_embs:
+            self.embeddings.weight.data = torch.eye(self.lang_size)
+            self.embeddings.weight.requires_grad = False
+            self.emb_size = self.lang_size
         if self.record_lang_stats:
-            self.register_buffer("emb_mean", torch.zeros(1,self.h_size))
-            self.register_buffer("emb_std", torch.ones(1,self.h_size))
+            self.register_buffer("emb_mean", torch.zeros(1,self.emb_size))
+            self.register_buffer("emb_std", torch.ones(1,self.emb_size))
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
-            self.lstm_consol = ContainedLSTM( self.h_size, self.h_size )
+            self.lstm_consol = ContainedLSTM( self.emb_size, self.h_size )
         self.consolidator = nn.Sequential(
-            nn.Linear(self.h_size, self.h_size),
+            nn.Linear(self.emb_size, self.h_size),
             nn.LayerNorm(self.h_size),
             nn.ReLU()
         )
@@ -1615,6 +1630,7 @@ class VaryLSTM(Model):
                 "soft_attn": self.soft_attn,
                 "record_lang_stats": self.record_lang_stats,
                 "emb_ffn": self.emb_ffn,
+                "one_hot_embs": self.one_hot_embs,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -2426,8 +2442,11 @@ class PreNSepLSTM(LSTMOffshoot):
         ])
 
         # Actn LSTMS
-        incl_lang = int(self.incl_lang_inpt)
-        size = self.h_size*(1+incl_lang)
+        size = self.h_size
+        if self.incl_lang_inpt:
+            if self.one_hot_embs:
+                size += self.lang_size
+            else: size += self.h_size
         self.lstms = nn.ModuleList([ nn.LSTMCell(size, self.h_size) ])
         for i in range(1, self.n_actn):
             self.lstms.append( nn.LSTMCell(self.h_size, self.h_size) )
@@ -3297,6 +3316,7 @@ class Transformer(Model):
                 "soft_attn": self.soft_attn,
                 "record_lang_stats": self.record_lang_stats,
                 "emb_ffn": self.emb_ffn,
+                "one_hot_embs": self.one_hot_embs,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
