@@ -236,8 +236,11 @@ def training_loop(n_epochs,
     """
     # Potentially modify starting epoch for resumption of previous
     # training. Defaults to 0 if not resuming or not same phase
+    val_mod = trainer.hyps.get("val_mod", 1)
+    if not val_mod or val_mod < 0: val_mod = 1
     start_epoch = resume_epoch(trainer)
-    if trainer.hyps["exp_name"]=="test": n_epochs = 2
+    always_eps = set([start_epoch + i for i in range(5)])
+    if trainer.hyps["exp_name"]=="test": n_epochs = 6
     for epoch in range(start_epoch, n_epochs):
         if verbose:
             print()
@@ -263,7 +266,7 @@ def training_loop(n_epochs,
         trainer.train(model, data_collector.exp_replay, epoch)
 
         # Validate Model by Awaiting Validation Process
-        if epoch > start_epoch:
+        if epoch>start_epoch and(epoch%val_mod==0 or epoch in always_eps):
             if verbose:
                 print("\nAwaiting validator for epoch", epoch-1)
                 if type(model) == cogmtc.models.TestModel:
@@ -273,9 +276,13 @@ def training_loop(n_epochs,
             data_collector.await_validator()
             avg_acc = data_collector.val_q.get()
             trainer.save_best_model(shared_model, avg_acc, epoch-1)
-        shared_model.load_state_dict(model.state_dict())
-        if verbose: print("\nDispatching validator")
-        data_collector.dispatch_validator(epoch)
+
+        if epoch==start_epoch or epoch%val_mod==(val_mod-1) or\
+                            epoch in {i-1 for i in always_eps} or\
+                            epoch==n_epochs-1:
+            shared_model.load_state_dict(model.state_dict())
+            if verbose: print("\nDispatching validator")
+            data_collector.dispatch_validator(epoch)
 
         # Clean up the epoch
         trainer.end_epoch(epoch, n_epochs, model)
@@ -1162,3 +1169,4 @@ def hyps_error_catching(hyps):
             "Setting first_phase to 0"
         print(s)
 
+    if hyps.get("val_max_actn", False): hyps["val_temp"] = None

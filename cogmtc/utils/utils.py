@@ -1450,3 +1450,19 @@ def integrated_gradient(model, X, layer='sequential.2', chans=None,
         return ndgrad, ndactivs
     return intg_grad, gc_activs
 
+def sample_with_temperature(logits, temperature=0.005):
+    """
+    Temperature is a scaling parameter to increase the entropy of the
+    sampling. Higher temperatures mean higher entropy.
+
+    Args:
+        logits: torch tensor (..., D)
+            the outputs of the model before the softmax
+        temperature: float  or None
+            higher values mean more randomness. If you argue 0 or
+            None, will return argmax
+    """
+    if not temperature: return torch.argmax(logits, dim=-1)
+    ps = torch.nn.functional.softmax( logits/temperature, dim=-1 )
+    return torch.multinomial(ps, num_samples=1)
+

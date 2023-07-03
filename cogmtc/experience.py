@@ -8,7 +8,7 @@ import numpy as np
 import cogmtc.models as models
 from cogmtc.envs import SequentialEnvironment, NONVERBAL_TASK_NAMES, CDTNL_LANG_SIZE
 from cogmtc.oracles import *
-from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS, neg_log_sample
+from cogmtc.utils.utils import try_key, sample_action, zipfian, get_lang_labels, get_loss_and_accs, convert_numeral_array_to_numbers, describe_then_prescribe, pre_step_up, post_step_up, INEQUALITY, ENGLISH, PIRAHA, RANDOM, DUPLICATES, NUMERAL, ACTIONS, neg_log_sample, sample_with_temperature
 
 from collections import deque, defaultdict
 import matplotlib.pyplot as plt
@@ -1124,7 +1124,7 @@ class Runner:
 
         self.h_bookmark = h_bookmark
 
-    def get_action(self, actn_pred):
+    def get_action(self, actn_pred, temperature=0.001):
         """
         Outputs the appropriate action from the actn_pred to be used
         by the environment.
@@ -1140,8 +1140,8 @@ class Runner:
         if try_key(self.hyps, "val_max_actn", False):
             actn = torch.argmax(actn_pred[0]).item()
         else:
-            actn = sample_action(
-                F.softmax(actn_pred, dim=-1), rand=self.rand
+            actn = sample_with_temperature(
+                actn_pred, temperature=self.hyps.get("val_temp", 0.005)
             ).item()
         return actn
 
