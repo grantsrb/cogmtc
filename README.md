@@ -638,11 +638,18 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         the range of target counts during the validation phase. both
         low and high are inclusive. only applies to gordongames
         variants. if None, defaults to training range.
-    "val_max_actn": bool
+    "val_max_actn": bool (deprecated: use `val_temp` instead)
         if true, actions during the validation phase are selected as
         the maximum argument over the model's action probability output.
         If False, actions are sampled from the action output with
         probability equal to the corresponding output probability
+    "val_temp": float or None
+        the action sampling temperature for validation rollouts. if
+        none or 0, will use argmax
+    "val_mod": int or null
+        a modulus to determine which epochs to validate. This speeds
+        up trainings. if None or 0, will default to validating every
+        epoch
     "n_eval_eps": int or null
         the number of episodes to collect for each target value during
         validation.

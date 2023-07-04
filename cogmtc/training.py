@@ -238,9 +238,11 @@ def training_loop(n_epochs,
     """
     # Potentially modify starting epoch for resumption of previous
     # training. Defaults to 0 if not resuming or not same phase
-    start_epoch = resume_epoch(trainer)
     val_mod = trainer.hyps.get("val_mod", 1)
-    if trainer.hyps["exp_name"]=="test": n_epochs = 4
+    if not val_mod or val_mod < 0: val_mod = 1
+    start_epoch = resume_epoch(trainer)
+    always_eps = set([start_epoch + i for i in range(5)])
+    if trainer.hyps["exp_name"]=="test": n_epochs = 6
     for epoch in range(start_epoch, n_epochs):
         if verbose:
             print()
@@ -266,17 +268,22 @@ def training_loop(n_epochs,
         trainer.train(model, data_collector.exp_replay, epoch)
 
         # Validate Model by Awaiting Validation Process
-        if epoch%val_mod==(val_mod-1) and data_collector.val_is_running:
+        if (epoch%val_mod==0 or epoch-1 in always_eps)\
+                                and data_collector.val_is_running:
+            diff = val_mod if epoch >= np.max(list(always_eps))+val_mod\
+                           else 1
             if verbose:
-                print("\nAwaiting validator for epoch", epoch-1)
+                print("\nAwaiting validator for epoch", epoch-diff)
                 if type(model) == cogmtc.models.TestModel:
                     print("Len data strings dict:", len(model.data_strings))
                     for k,v in model.data_strings.items():
                         print("v:", v)
             data_collector.await_validator()
             avg_acc = data_collector.val_q.get()
-            trainer.save_best_model(shared_model, avg_acc, epoch-1)
-        if epoch%val_mod==0 and not data_collector.val_is_running:
+            trainer.save_best_model(shared_model, avg_acc, epoch-diff)
+
+        if (epoch%val_mod==0 or epoch in always_eps) and\
+                        not data_collector.val_is_running:
             if verbose: print("\nDispatching validator")
             shared_model.load_state_dict(model.state_dict())
             data_collector.dispatch_validator(epoch)
@@ -1167,3 +1174,4 @@ def hyps_error_catching(hyps):
             "Setting first_phase to 0"
         print(s)
 
+    if hyps.get("val_max_actn", False): hyps["val_temp"] = None
