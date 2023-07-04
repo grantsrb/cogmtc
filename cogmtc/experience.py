@@ -1197,7 +1197,6 @@ class ValidationRunner(Runner):
         self.hyps["hold_lang"] = None
         self.hyps["hold_actns"] = None
         self.hyps["hold_outs"] = set()
-        self.hyps["rand_timing"] = False
         print("Validation runner target range:",self.hyps["targ_range"])
         self.phase = phase
         self.obs_deque = deque(maxlen=hyps['n_frame_stack'])
@@ -1710,7 +1709,6 @@ class ValidationRunner(Runner):
             "count_col": [],
             "player_col": [],
         }
-        self.hyps["rand_timing"] = False
         state = self.create_new_env(
             n_targs=n_targs,
             env_type=env_type
