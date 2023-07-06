@@ -239,7 +239,9 @@ def training_loop(n_epochs,
     val_mod = trainer.hyps.get("val_mod", 1)
     if not val_mod or val_mod < 0: val_mod = 1
     start_epoch = resume_epoch(trainer)
-    always_eps = set([start_epoch + i for i in range(5)])
+    always_eps = trainer.hyps.get("always_epochs", None)
+    if always_eps is None: always_eps = 0
+    always_eps = set([start_epoch + i for i in range(always_eps)])
     if trainer.hyps["exp_name"]=="test": n_epochs = 6
     for epoch in range(start_epoch, n_epochs):
         if verbose:
@@ -584,12 +586,12 @@ class Trainer:
                 )
                 # Backprop and update
                 loss.backward()
-                if try_key(self.hyps, "grad_norm", 0) > 0:
+                if try_key(self.hyps, "grad_norm", 0):
                     torch.nn.utils.clip_grad_norm_(
                         model.parameters(),
                         self.hyps["grad_norm"]
                     )
-                if try_key(self.hyps, "drop_grad", 0) > 0:
+                if try_key(self.hyps, "drop_grad", 0):
                     drop_p = self.hyps["drop_grad"]
                     for p in model.parameters():
                         if hasattr(p.grad, "data"):
@@ -1096,8 +1098,7 @@ def hyps_error_catching(hyps):
         hyps["tforce"] = False
     elif hyps["aux_lang"]:
         hyps["incl_lang_inpt"] = False
-        hyps["n_lang_lstms"] = 0
-        
+
     if hyps["use_count_words"] == NUMERAL:
         hyps["lstm_lang"] = True
         print("setting lstm lang to true")
