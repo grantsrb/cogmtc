@@ -361,6 +361,8 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "c_lnorm": bool
         determines whether or not lnorm should be performed on the
         c vector. You probably want this to be false.
+    "lang_lnorm": bool
+        if true, will add an lnorm before the language lstms
     "fc_lnorm": bool
         if true, the model uses a layernorm before each Linear layer
         in the fully connected layers
