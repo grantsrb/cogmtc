@@ -179,6 +179,7 @@ class Model(CoreModule):
         lang_incl_layer=0,
         cut_lang_grad=False,
         incl_cdtnl=True,
+        inpt_consol_emb_size=None,
         *args, **kwargs
     ):
         """
@@ -330,7 +331,9 @@ class Model(CoreModule):
                 layer in the fully connected layers
             fc_lnorm: bool
                 if true, adds a layernorm layer before each Linear
-                layer in the fully connected layers
+                layer in the fully connected layers. Will override
+                `actn_fc_lnorm` and `lang_fc_lnorm` only when `fc_lnorm`
+                is true.
             actn_fc_lnorm: bool
                 if true, adds a layernorm layer before each Linear
                 layer in the action prediction fully connected layers
@@ -418,6 +421,9 @@ class Model(CoreModule):
                 if true, guarantees conditional vector is used.
                 Otherwise the conditional is only used when there are
                 more than 1 environment type
+            inpt_consol_emb_size:
+                if using word embeddings as language input, can specify
+                the dimensionality of the embeddings
         """
         super().__init__()
         self.model_type = MODEL_TYPES.LSTM
@@ -446,6 +452,7 @@ class Model(CoreModule):
         self.env_types = env_types
         self.n_env_types = len(set(env_types))
         self.incl_cdtnl = incl_cdtnl
+        self.inpt_consol_emb_size = inpt_consol_emb_size
         print("Including Conditional:", self.incl_cdtnl)
         self.env2idx = {k:i for i,k in enumerate(self.env_types)}
         self.n_envs = len(self.env_types)
@@ -485,10 +492,14 @@ class Model(CoreModule):
         self.learn_h = learn_h
         self.scaleshift = scaleshift
         self.fc_lnorm = fc_lnorm
-        self.actn_fc_lnorm = actn_fc_lnorm
-        if actn_fc_lnorm is None: self.actn_fc_lnorm = self.fc_lnorm
-        self.lang_fc_lnorm = lang_fc_lnorm
-        if lang_fc_lnorm is None: self.lang_fc_lnorm = self.fc_lnorm
+        if self.fc_lnorm:
+            self.actn_fc_lnorm = fc_lnorm
+            self.lang_fc_lnorm = fc_lnorm
+        else:
+            self.actn_fc_lnorm = actn_fc_lnorm
+            if actn_fc_lnorm is None: self.actn_fc_lnorm = self.fc_lnorm
+            self.lang_fc_lnorm = lang_fc_lnorm
+            if lang_fc_lnorm is None: self.lang_fc_lnorm = self.fc_lnorm
         self.c_lnorm = c_lnorm
         self.lang_lnorm = lang_lnorm
         self.fc_bnorm = fc_bnorm
@@ -785,8 +796,8 @@ class InptConsolidationModule(nn.Module):
     to be used as input to an LSTM module in the next timestep.
     """
     def __init__(self, lang_size,
+                       h_size,
                        use_count_words=None,
-                       h_size=None,
                        max_char_seq=1,
                        STOP=1,
                        null_idx=0,
@@ -797,6 +808,7 @@ class InptConsolidationModule(nn.Module):
                        alpha=0.99,
                        emb_ffn=False,
                        one_hot_embs=False,
+                       emb_size=None,
                        *args,**kwargs):
         """
         Args:
@@ -807,6 +819,8 @@ class InptConsolidationModule(nn.Module):
                 the type of language training
             h_size: int
                 hidden size of lstm if consolidating a sequence
+            emb_size: int
+                the embedding size.
             max_char_seq: int
             STOP: int
                 index of stop token (if one exists). only matters if
@@ -845,8 +859,8 @@ class InptConsolidationModule(nn.Module):
         super().__init__()
         self.lang_size = lang_size
         self.h_size = h_size
-        self.emb_size = self.h_size
         self.one_hot_embs = one_hot_embs
+        self.emb_size = h_size if emb_size is None else emb_size
         self.use_count_words = use_count_words
         self.mcs = 1 if max_char_seq is None or max_char_seq < 1\
                      else max_char_seq
@@ -859,7 +873,7 @@ class InptConsolidationModule(nn.Module):
         self.alpha = alpha
         self.emb_ffn = emb_ffn
 
-        self.embeddings = nn.Embedding(self.lang_size,self.h_size)
+        self.embeddings = nn.Embedding(self.lang_size,self.emb_size)
         if self.one_hot_embs:
             self.embeddings.weight.data = torch.eye(self.lang_size)
             self.embeddings.weight.requires_grad = False
@@ -869,13 +883,24 @@ class InptConsolidationModule(nn.Module):
             self.register_buffer("emb_std", torch.ones(1,self.emb_size))
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
-            self.lstm_consol = ContainedLSTM( self.emb_size, self.h_size )
-        self.consolidator = nn.Sequential(
-            nn.Linear(self.emb_size, self.h_size),
-            nn.LayerNorm(self.h_size),
-            nn.ReLU()
-        )
-        self.proj = nn.Linear(self.h_size, self.h_size)
+            self.lstm_consol = ContainedLSTM( self.emb_size, self.emb_size )
+        if self.emb_size==self.h_size:
+            self.consolidator = nn.Sequential(
+                nn.Linear(self.h_size, self.h_size),
+                nn.LayerNorm(self.h_size),
+                nn.ReLU()
+            )
+            self.proj = nn.Linear(self.h_size, self.h_size)
+        else:
+            if self.emb_ffn:
+                self.consolidator = nn.Sequential(
+                    nn.Linear(self.emb_size, self.h_size),
+                    nn.LayerNorm(self.h_size),
+                    nn.ReLU()
+                )
+                self.proj = nn.Linear(self.h_size, self.h_size)
+            else:
+                self.proj = nn.Linear(self.emb_size, self.h_size)
 
     def reshape_and_extract(self, inpt, *args, **kwargs):
         """
@@ -1032,6 +1057,8 @@ class InptConsolidationModule(nn.Module):
             #I think we can remove this if statement, but I'm not certain
             if len(embs.shape)==2:
                 embs = self.consolidator(embs)
+            return self.proj(embs)
+        elif self.h_size!=self.emb_size:
             return self.proj(embs)
         return embs
 
@@ -1631,6 +1658,7 @@ class VaryLSTM(Model):
                 "record_lang_stats": self.record_lang_stats,
                 "emb_ffn": self.emb_ffn,
                 "one_hot_embs": self.one_hot_embs,
+                "emb_size": self.inpt_consol_emb_size,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs
@@ -3317,6 +3345,7 @@ class Transformer(Model):
                 "record_lang_stats": self.record_lang_stats,
                 "emb_ffn": self.emb_ffn,
                 "one_hot_embs": self.one_hot_embs,
+                "emb_size": self.inpt_consol_emb_size,
             }
             self.lang_consolidator = InptConsolidationModule(
                 **consolidator_kwargs

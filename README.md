@@ -335,6 +335,11 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "h_size": int
         this number is used as the size of the RNN hidden vector and
         the transformer dim
+    "emb_ffn": bool
+        if true, the embedding is processed through a feedforward network.
+    "inpt_consol_emb_size": int
+        if using word embeddings as language input, can specify
+        the dimensionality of the embeddings
     "learn_h": bool
         determines if the hidden vectors should be learned or not. if
         true, both the h and c vectors are intiialized to a learned
@@ -652,6 +657,14 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         a modulus to determine which epochs to validate. This speeds
         up trainings. if None or 0, will default to validating every
         epoch
+    "doubl_val_mod": null or list of ints
+        a list of epochs at which `val_mod` should be doubled from its
+        current value. This allows validation every other epoch for
+        the first x epochs, and then every 4th for the next y epochs,
+        and so on.
+    "always_epochs": null or int
+        a threshold epoch before which all epochs are validated
+        regardless of `val_mod`.
     "n_eval_eps": int or null
         the number of episodes to collect for each target value during
         validation.
