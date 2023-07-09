@@ -236,6 +236,7 @@ def training_loop(n_epochs,
     """
     # Potentially modify starting epoch for resumption of previous
     # training. Defaults to 0 if not resuming or not same phase
+    double_mod_at_epochs = trainer.hyps.get("double_val_mod", [])
     val_mod = trainer.hyps.get("val_mod", 1)
     if not val_mod or val_mod < 0: val_mod = 1
     start_epoch = resume_epoch(trainer)
@@ -244,6 +245,7 @@ def training_loop(n_epochs,
     always_eps = set([start_epoch + i for i in range(always_eps)])
     if trainer.hyps["exp_name"]=="test": n_epochs = 6
     for epoch in range(start_epoch, n_epochs):
+        if epoch in double_mod_at_epochs: val_mod *= 2
         if verbose:
             print()
             print("Phase:",
