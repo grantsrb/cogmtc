@@ -178,11 +178,12 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         player is no longer on the pile. Overrides `langall` to true.
         will be ignored if actnlish is true.
     "skippan": bool
-        if true, will include a completely new skip token for language
-        predictions on skipped frames.
+        if true, will include a language prediction for skipped steps
+        in random timing trials.
     "skip_is_null": bool
         if true, will set the skip token equal to the null token to
-        conserve the number of language prediction types.
+        conserve the number of language prediction types. Otherwise,
+        creates an entirely new token. Only applies if `skippan` is true.
     "numeral_base": int or None
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with

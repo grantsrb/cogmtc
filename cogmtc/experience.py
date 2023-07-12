@@ -659,10 +659,9 @@ class DataCollector:
         if try_key(self.hyps,"actnlish",False):
             self.hyps["lang_size"] += self.hyps["actn_size"]
             self.hyps["lang_offset"] = self.hyps["actn_size"]
+        self.hyps["skip_label"] = self.hyps["null_label"]
         if self.hyps.get("skippan", False):
-            if self.hyps.get("skip_is_null", True):
-                self.hyps["skip_label"] = self.hyps["null_label"]
-            else:
+            if not self.hyps.get("skip_is_null", True):
                 self.hyps["skip_label"] = self.hyps["lang_size"]
                 self.hyps["lang_size"] += 1
         self.validator.hyps["max_char_seq"] = self.hyps["max_char_seq"]
