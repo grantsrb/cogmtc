@@ -2525,8 +2525,11 @@ class PreNSepLSTM(LSTMOffshoot):
                 if not None and self.incl_lang_inpt is true, lang_inpt
                 is used as an additional input into the lstm. They
                 should be token indicies. M is the max_char_seq
-            blank_lang: bool
-                if true, blanks out the language before inputting
+            blank_lang: bool or tensor
+                if True is argued, will replace input language embeddings
+                with zeros before inputting into model.
+                if tensor is argued, replaces the input language
+                embeddings with the argued tensor before inputting
                 into the model. only applies if incl_lang_inpt is
                 true
             avg_lang: bool
@@ -2613,7 +2616,10 @@ class PreNSepLSTM(LSTMOffshoot):
             lang_inpt = self.lang_consolidator(
                 lang_inpt, avg_embs=avg_lang
             )
-            if blank_lang: lang_inpt = torch.zeros_like(lang_inpt)
+            if type(blank_lang)!=type(bool):
+                lang_inpt[...,:] = blank_lang
+            elif blank_lang:
+                lang_inpt = torch.zeros_like(lang_inpt)
             h = [h, lang_inpt]
             h = torch.cat(h, dim=-1)
 
