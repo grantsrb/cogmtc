@@ -1742,10 +1742,6 @@ class ValidationRunner(Runner):
             data["actn_targs"].append(targ)
 
             if teacher_force and (ucw==ENGLISH or ucw==RANDOM):
-                if contr.n_steps <= contr.n_targs:
-                    n_items = contr.n_steps
-                else: n_items = contr.register.n_items
-
                 pre_rand = self.hyps.get("pre_rand",False)
                 if pre_rand and self.phase==0:
                     ucw = RANDOM
@@ -1753,15 +1749,19 @@ class ValidationRunner(Runner):
                 if "n_items" not in info:
                     label = self.hyps["lang_offset"]
                 elif not pre_rand and self.hyps.get("actnlish", False) and\
-                         ((contr.n_items>=contr.n_targs) and\
-                         not contr.is_animating) or not contr.is_pop:
+                         (((contr.n_items>=contr.n_targs) and\
+                         not contr.is_animating) or not contr.is_pop()):
                     label = targ
-                elif not pre_rand and self.hyps.get("nullese", False) and\
-                                                   not contr.is_pop:
+                elif not pre_rand and self.hyps.get("nullese", False)\
+                                            and not contr.is_pop():
                     label = self.hyps["null_label"]
-                elif not pre_rand and self.hyps.get("skippan", False) and\
-                                                   contr.skipped:
-                    label = self.hyps["skip_label"]
+                elif not pre_rand and (self.hyps.get("skippan", False) or
+                                self.hyps.get("nullese", False)) and\
+                                                    contr.prev_skipped:
+                    if self.hyps.get("skippan",False):
+                        label = self.hyps["skip_label"]
+                    else:
+                        label = self.hyps["null_label"]
                 else:
                     if contr.n_steps<=contr.n_targs:
                         n_items = contr.n_steps
@@ -1846,15 +1846,19 @@ class ValidationRunner(Runner):
                     ucw = RANDOM
 
                 if not pre_rand and self.hyps.get("actnlish", False) and\
-                         ((info["n_items"]>=info["n_targs"]) and\
-                         not info["is_animating"]) or not info["is_pop"]:
+                         (((info["n_items"]>=info["n_targs"]) and\
+                         not info["is_animating"]) or not info["is_pop"]):
                     lang_targ = targ
                 elif not pre_rand and self.hyps.get("nullese", False) and\
                                                    not info["is_pop"]:
                     lang_targ = self.hyps["null_label"]
-                elif not pre_rand and self.hyps.get("skippan", False) and\
-                                                        info["skipped"]:
-                    lang_targ = self.hyps["skip_label"]
+                elif not pre_rand and (self.hyps.get("skippan", False) or
+                                self.hyps.get("nullese", False)) and\
+                                                    info["skipped"]:
+                    if self.hyps["skippan"]:
+                        lang_targ = self.hyps["skip_label"]
+                    else:
+                        lang_targ = self.hyps["null_label"]
                 else:
                     lang_targ = get_lang_labels(
                         torch.LongTensor([info["n_items"]]),
@@ -1868,8 +1872,15 @@ class ValidationRunner(Runner):
                         stop_label=self.hyps["STOP"]
                     ).item()
                 if teacher_force and self.hyps["use_count_words"]==ENGLISH:
-                    assert label==lang_targ
                     print("Label", label, "- Targ:", lang_targ)
+                    try:
+                        assert label==lang_targ
+                    except:
+                        print("Null Label:", self.hyps["null_label"])
+                        print("Skip Label:", self.hyps["skip_label"])
+                        for k in info:
+                            print(k, info[k])
+                        assert False
                 print("Lang (pred, targ):",
                     torch.argmax(lang.squeeze().cpu().data).item(),
                     "--", lang_targ)

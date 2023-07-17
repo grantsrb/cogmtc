@@ -437,7 +437,7 @@ def get_lang_labels(n_items,
 
     if ctype == ENGLISH:
         if null_label is None: null_label = max_targ-1
-        labels[n_items>max_targ] = null_label
+        labels[n_items>max_targ] = max_targ
     elif ctype == INEQUALITY:
         labels[n_items<n_targs] = 0
         labels[n_items==n_targs] = 1
