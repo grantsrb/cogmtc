@@ -1755,13 +1755,9 @@ class ValidationRunner(Runner):
                 elif not pre_rand and self.hyps.get("nullese", False)\
                                             and not contr.is_pop():
                     label = self.hyps["null_label"]
-                elif not pre_rand and (self.hyps.get("skippan", False) or
-                                self.hyps.get("nullese", False)) and\
-                                                    contr.prev_skipped:
-                    if self.hyps.get("skippan",False):
-                        label = self.hyps["skip_label"]
-                    else:
-                        label = self.hyps["null_label"]
+                elif not pre_rand and self.hyps.get("skippan", False)\
+                                              and contr.prev_skipped:
+                    label = self.hyps["skip_label"]
                 else:
                     if contr.n_steps<=contr.n_targs:
                         n_items = contr.n_steps
@@ -1852,13 +1848,9 @@ class ValidationRunner(Runner):
                 elif not pre_rand and self.hyps.get("nullese", False) and\
                                                    not info["is_pop"]:
                     lang_targ = self.hyps["null_label"]
-                elif not pre_rand and (self.hyps.get("skippan", False) or
-                                self.hyps.get("nullese", False)) and\
-                                                    info["skipped"]:
-                    if self.hyps["skippan"]:
-                        lang_targ = self.hyps["skip_label"]
-                    else:
-                        lang_targ = self.hyps["null_label"]
+                elif not pre_rand and self.hyps.get("skippan", False)\
+                                              and info["skipped"]:
+                    label = self.hyps["skip_label"]
                 else:
                     lang_targ = get_lang_labels(
                         torch.LongTensor([info["n_items"]]),
