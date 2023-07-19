@@ -1283,7 +1283,9 @@ class ValidationRunner(Runner):
             self.hyps["targ_range"][1]+1
         )
         if self.hyps["exp_name"] == "test":
-            rainj = list(range(2,4))+[17,18,19]
+            rainj = list(range(3,7))
+            if self.hyps["val_targ_range"][-1]>17:
+                rainj.append(17)
         tforce = self.hyps.get("teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
@@ -1746,18 +1748,23 @@ class ValidationRunner(Runner):
                 if pre_rand and self.phase==0:
                     ucw = RANDOM
 
+                #print()
                 if "n_items" not in info:
                     label = self.hyps["lang_offset"]
+                    #print("top if:", label)
                 elif not pre_rand and self.hyps.get("actnlish", False) and\
                          (((contr.n_items>=contr.n_targs) and\
                          not contr.is_animating) or not contr.is_pop()):
                     label = targ
+                    #print("actnlish:", label)
                 elif not pre_rand and self.hyps.get("nullese", False)\
                                             and not contr.is_pop():
                     label = self.hyps["null_label"]
+                    #print("nullese:", label)
                 elif not pre_rand and self.hyps.get("skippan", False)\
                                               and contr.prev_skipped:
                     label = self.hyps["skip_label"]
+                    #print("skippan:", label)
                 else:
                     if contr.n_steps<=contr.n_targs:
                         n_items = contr.n_steps
@@ -1773,6 +1780,7 @@ class ValidationRunner(Runner):
                         null_label=self.hyps["null_label"],
                         stop_label=self.hyps["STOP"]
                     ).item()
+                    #print("default:", label)
                 lang_inpt = torch.tensor([label], device=DEVICE).long()
 
             inpt = t_state[None].to(DEVICE)
