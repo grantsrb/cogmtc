@@ -2616,7 +2616,7 @@ class PreNSepLSTM(LSTMOffshoot):
             lang_inpt = self.lang_consolidator(
                 lang_inpt, avg_embs=avg_lang
             )
-            if type(blank_lang)!=type(bool):
+            if type(blank_lang)!=type(bool()):
                 lang_inpt[...,:] = blank_lang
             elif blank_lang:
                 lang_inpt = torch.zeros_like(lang_inpt)
