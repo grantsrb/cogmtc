@@ -796,8 +796,8 @@ class InptConsolidationModule(nn.Module):
     to be used as input to an LSTM module in the next timestep.
     """
     def __init__(self, lang_size,
-                       h_size,
                        use_count_words=None,
+                       h_size=None,
                        max_char_seq=1,
                        STOP=1,
                        null_idx=0,
@@ -806,9 +806,7 @@ class InptConsolidationModule(nn.Module):
                        soft_attn=False,
                        record_lang_stats=False,
                        alpha=0.99,
-                       emb_ffn=False,
-                       one_hot_embs=False,
-                       emb_size=None,
+                       emb_ffn=True,
                        *args,**kwargs):
         """
         Args:
@@ -819,8 +817,6 @@ class InptConsolidationModule(nn.Module):
                 the type of language training
             h_size: int
                 hidden size of lstm if consolidating a sequence
-            emb_size: int
-                the embedding size.
             max_char_seq: int
             STOP: int
                 index of stop token (if one exists). only matters if
@@ -852,15 +848,10 @@ class InptConsolidationModule(nn.Module):
             emb_ffn: bool
                 if true, the embedding is processed through a
                 feedforward network.
-            one_hot_embs: bool
-                if true, will maintain all embeddings as one-hot
-                encodings.
         """
         super().__init__()
         self.lang_size = lang_size
         self.h_size = h_size
-        self.one_hot_embs = one_hot_embs
-        self.emb_size = h_size if emb_size is None else emb_size
         self.use_count_words = use_count_words
         self.mcs = 1 if max_char_seq is None or max_char_seq < 1\
                      else max_char_seq
@@ -873,34 +864,19 @@ class InptConsolidationModule(nn.Module):
         self.alpha = alpha
         self.emb_ffn = emb_ffn
 
-        self.embeddings = nn.Embedding(self.lang_size,self.emb_size)
-        if self.one_hot_embs:
-            self.embeddings.weight.data = torch.eye(self.lang_size)
-            self.embeddings.weight.requires_grad = False
-            self.emb_size = self.lang_size
+        self.embeddings = nn.Embedding(self.lang_size,self.h_size)
         if self.record_lang_stats:
-            self.register_buffer("emb_mean", torch.zeros(1,self.emb_size))
-            self.register_buffer("emb_std", torch.ones(1,self.emb_size))
+            self.register_buffer("emb_mean", torch.zeros(1,self.h_size))
+            self.register_buffer("emb_std", torch.ones(1,self.h_size))
         self.dropout = nn.Dropout(p=self.drop_p)
         if self.use_count_words == NUMERAL:
-            self.lstm_consol = ContainedLSTM( self.emb_size, self.emb_size )
-        if self.emb_size==self.h_size:
-            self.consolidator = nn.Sequential(
-                nn.Linear(self.h_size, self.h_size),
-                nn.LayerNorm(self.h_size),
-                nn.ReLU()
-            )
-            self.proj = nn.Linear(self.h_size, self.h_size)
-        else:
-            if self.emb_ffn:
-                self.consolidator = nn.Sequential(
-                    nn.Linear(self.emb_size, self.h_size),
-                    nn.LayerNorm(self.h_size),
-                    nn.ReLU()
-                )
-                self.proj = nn.Linear(self.h_size, self.h_size)
-            else:
-                self.proj = nn.Linear(self.emb_size, self.h_size)
+            self.lstm_consol = ContainedLSTM( self.h_size, self.h_size )
+        self.consolidator = nn.Sequential(
+            nn.Linear(self.h_size, self.h_size),
+            nn.LayerNorm(self.h_size),
+            nn.ReLU()
+        )
+        self.proj = nn.Linear(self.h_size, self.h_size)
 
     def reshape_and_extract(self, inpt, *args, **kwargs):
         """
@@ -1058,9 +1034,9 @@ class InptConsolidationModule(nn.Module):
             if len(embs.shape)==2:
                 embs = self.consolidator(embs)
             return self.proj(embs)
-        elif self.h_size!=self.emb_size:
-            return self.proj(embs)
         return embs
+
+
 
 
 class NullModel(Model):
@@ -2616,10 +2592,11 @@ class PreNSepLSTM(LSTMOffshoot):
             lang_inpt = self.lang_consolidator(
                 lang_inpt, avg_embs=avg_lang
             )
-            if type(blank_lang)!=type(bool):
+            if type(blank_lang)!=type(bool): # Allows tensor arguments
                 lang_inpt[...,:] = blank_lang
             elif blank_lang:
                 lang_inpt = torch.zeros_like(lang_inpt)
+            print(lang_inpt)
             h = [h, lang_inpt]
             h = torch.cat(h, dim=-1)
 
