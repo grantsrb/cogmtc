@@ -524,6 +524,7 @@ class Trainer:
                             print("isPop:", data["is_pop"][row,ii].cpu().numpy())
                             print("actns:", actns[row,ii].cpu().numpy())
                             print("isanim:", data["is_animating"][row,ii].cpu().numpy())
+                            print("skipped:", data["skipped"][row,ii].cpu().numpy())
                             print("masks:", masks[row,ii].cpu().numpy())
                             print("tasks:", tasks[row,ii].cpu().numpy())
                             print()
