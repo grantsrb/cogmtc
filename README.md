@@ -175,15 +175,17 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if true, the language model is trained to predict a null label
         for game steps in which the player has responded the
         correct number of times after the animation phase and/or the
-        player is no longer on the pile. Overrides `langall` to true.
+        player is no longer on the pile. Will set `langall` to true.
         will be ignored if actnlish is true.
     "skippan": bool
         if true, will include a language prediction for skipped steps
-        in random timing trials.
+        in random timing trials. Otherwise defaults to repeating the
+        current count during skipped steps.
     "skip_is_null": bool
-        if true, will set the skip token equal to the null token to
-        conserve the number of language prediction types. Otherwise,
-        creates an entirely new token. Only applies if `skippan` is true.
+        if true, will set the skip token (used in the `skippan` setting)
+        equal to the null token to conserve the number of language
+        prediction types. If false, creates an entirely new language
+        token for skipped frames. Only applies if `skippan` is true.
     "numeral_base": int or None
         if base is argued and use_count_words is 5, lang_preds are
         sequential and are trained to output the numerals inline with
@@ -304,9 +306,18 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         DoubleVaryLSTM model type and `incl_lang_preds` is true.
     "tforce": bool
         if true, allows teacher forcing. See `lang_teacher_p` to make
-        teacher forcing probabilistic during training. Defaults to
-        always teacher forcing. If `tforce` is false, will not allow
-        teacher forcing.
+        teacher forcing probabilistic during training. Setting tforce
+        to true will always use teacher forcing during both training
+        and validation.
+    "tforce_train": bool
+        overwritten by `tforce`. If true, will use teacher forcing
+        during training. Makes no changes to teacher forcing during
+        validation. See `tforce_val` or `teacher_force_val` to use
+        teacher forcing during validation.
+    "tforce_val": bool
+        if true, the correct language inputs are fed into the model
+        during validation. Only implemented for ENGLISH language, no
+        `actnlish`
     "lang_teacher_p": float [0,1]
         the probability of using teacher forcing on the language inputs
         for each training iteration. only applies if incl_lang_inpt

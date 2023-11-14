@@ -1105,14 +1105,25 @@ def hyps_error_catching(hyps):
     elif hyps["use_count_words"] == ACTIONS:
         hyps["actnlish"] = True
         print("actnlish defaults to true for ACTIONS lang type")
+    
+    if hyps.get("teacher_force_val", False):
+        hyps["tforce_val"] = True
 
     if hyps.get("tforce", False):
         hyps["lang_teacher_p"] = 1
         hyps["incl_lang_inpt"] = True
         hyps["teacher_force_val"] = True
+        hyps["tforce_train"] = True
+        hyps["tforce_val"] = True
         print("Setting teacher_force_val to True!!!!!!!!!!!")
     else:
-        hyps["lang_teacher_p"] = 0
+        if hyps.get("tforce_train", False):
+            hyps["incl_lang_inpt"] = True
+            hyps["lang_teacher_p"] = 1
+        if hyps.get("tforce_val", False):
+            hyps["incl_lang_inpt"] = True
+            hyps["tforce_val"] = True
+            hyps["teacher_force_val"] = True
 
     if "langall" not in hyps and "lang_on_drops_only" in hyps:
         hyps["langall"] = not hyps["lang_on_drops_only"]

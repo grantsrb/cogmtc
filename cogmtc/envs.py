@@ -46,6 +46,10 @@ CONDITIONALS = {
   "gordongames-v11": "press the number of items",
   "gordongames-v12": "press the number of items",
 }
+# This is to keep everything equivalent when switching over to
+# numeric versions of tasks
+CONDITIONALS["gordongames-v13"] = CONDITIONALS["gordongames-v4"]
+CONDITIONALS["gordongames-v14"] = CONDITIONALS["gordongames-v8"]
 CONDITIONALS = {
     **CONDITIONALS,
     **{k.replace("games", "cont"): v for k,v in CONDITIONALS.items()}

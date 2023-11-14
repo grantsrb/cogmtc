@@ -1,5 +1,5 @@
 import torch
-import cogmtc
+import cogmtc.training
 from cogmtc.utils.training import run_training
 import torch.multiprocessing as mp
 

@@ -1,6 +1,9 @@
 import gordongames as gg
-import gordoncont.oracles as gco
 import numpy as np
+try:
+    import gordoncont.oracles as gco
+except:
+    print("Install gordoncont if you want to use continuous env setting")
 
 class Oracle:
     def __call__(self, env=None, state=None):

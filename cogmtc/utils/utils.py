@@ -607,7 +607,7 @@ def describe_then_prescribe(arr, no_shifts):
     """
     prescribe = torch.empty_like(arr)
     prescribe[...,:-1] = arr[...,1:]
-    prescribe[...,-1:] = arr[...,-1:]
+    prescribe[...,-1] = arr[...,-1]
     idx = (no_shifts==1)
     prescribe[idx] = arr[idx]
     return prescribe

@@ -1286,7 +1286,9 @@ class ValidationRunner(Runner):
             rainj = list(range(3,7))
             if self.hyps["val_targ_range"][-1]>17:
                 rainj.append(17)
-        tforce = self.hyps.get("teacher_force_val",False)
+        tforce = self.hyps.get("tforce_val",False)
+        # Legacy
+        tforce = tforce or self.hyps.get("teacher_force_val",False)
         unique_preds = set()
         unique_targs = set()
         for env_type in self.env_types:
