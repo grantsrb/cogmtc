@@ -88,9 +88,13 @@ def split_ranges(meta):
 
     # Save to folder that we found the ranges
     # Each ranges is saved as exp_name{cuda_device}.json
-    save_path = os.path.abspath(meta["hyperranges"]).split("/")
-    save_path[-1] = load_json(meta["hyperparams"])["exp_name"]
-    save_path = "/".join(save_path)
+    save_path = "./temp_params/"
+    save_path = os.path.abspath(save_path)
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+    save_path = os.path.join(
+        save_path, load_json(meta["hyperparams"])["exp_name"]
+    )
 
     devices = meta["devices"]
 

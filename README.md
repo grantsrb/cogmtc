@@ -224,16 +224,20 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
     "model_type": str
         the name of the model class that you wish to use for the
         training. i.e. "SimpleCNN"
+    "sep_pathways": bool
+        if true, will create the model to have separate language and
+        action pathways (separate defined by no shared computation and
+        thus no shared gradients). The language prediction, however,
+        will still be used by the action network.
     "splt_feats": bool
         effectively creates a separate convolutional network
         for the language pathway in the NSepLSTM variants.
         This ensures that the language and policy pathways do
         not overlap at all.
     "aux_lang": bool
-        if true, will set the number of language lstms to 0 and will
-        set `incl_lang_inpt` to false. The goal is to ensure that a
-        language prediction is made directly from the last pre-lstm h
-        vector rather than an additional language lstm.
+        if true, will set `incl_lang_inpt` to false. The goal is to
+        ensure that a language prediction is made, but is not included
+        in the action lstm pathway 
     "n_lstms": int
         The number of LSTMs to use in the model type. This only applies
         for the NVaryLSTM and NSepLSTM variants. In the NVaryLSTM, the

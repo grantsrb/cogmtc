@@ -1172,6 +1172,18 @@ def hyps_error_catching(hyps):
         hyps["incl_actn_inpt"] = hyps["lstm_actn_inpt"]
         print("Fixing naming mistake, lstm_actn_inpt to incl_actn_inpt")
 
+    if hyps.get("sep_pathways", False):
+        if hyps["use_count_words"]==BASELINE:
+            print("No Language variant takes priority over sep_pathways")
+        else:
+            print("Separating language and action pathways")
+            hyps["model_type"] = "PreNSepLSTM"
+            hyps["splt_feats"] = True
+            hyps["n_pre_lstms"] = 0
+            hyps["n_lang_lstms"] = max(1, hyps.get("n_lang_lstms", 1))
+            hyps["n_actn_lstms"] = max(1, hyps.get("n_actn_lstms", 1))
+            hyps["incl_lang_inpt"] = True
+
     if "splt_feats" not in hyps and "splt_feat" in hyps:
         hyps["splt_feats"] = hyps["splt_feat"]
         del hyps["splt_feat"]
@@ -1179,6 +1191,10 @@ def hyps_error_catching(hyps):
     if not (hyps["model_type"] in {"NSepLSTM", "PreNSepLSTM"}) and\
                                     try_key(hyps,"splt_feats",False):
         raise NotImplemented
+    elif hyps["model_type"]=="PreNSepLSTM" and hyps.get("splt_feats",False):
+        hyps["n_pre_lstms"] = 0
+        print("Setting prelstms to 0 to maintain separate language "+
+            "and action pathways")
 
     if try_key(hyps, "pre_rand", False):
         if hyps["use_count_words"] != ENGLISH: raise NotImplemented
