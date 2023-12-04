@@ -228,7 +228,9 @@ Set values in a json and run `$ python3 main.py your_hyperparams_json.json` to u
         if true, will create the model to have separate language and
         action pathways (separate defined by no shared computation and
         thus no shared gradients). The language prediction, however,
-        will still be used by the action network.
+        will still be used by the action network. This setting will
+        ensure the appropriate values are set to complete the experiment.
+        For example, it turns `splt_feats` to True.
     "splt_feats": bool
         effectively creates a separate convolutional network
         for the language pathway in the NSepLSTM variants.
